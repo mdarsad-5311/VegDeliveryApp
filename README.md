@@ -110,3 +110,4 @@ npm run android
 2. Connect mobile app services to Django APIs.
 3. Implement cart state management and checkout workflow.
 # VegDeliveryApp
+hi
