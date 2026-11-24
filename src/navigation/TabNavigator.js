@@ -1,6 +1,7 @@
 import React from 'react';
-import { Text, StyleSheet, View } from 'react-native';
+import { Text, StyleSheet, View, Platform } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import HomeScreen from '../screens/Home/HomeScreen';
 import CategoriesScreen from '../screens/Categories/CategoriesScreen';
 import CartScreen from '../screens/Cart/CartScreen';
@@ -40,6 +41,14 @@ const TabIcon = ({ name, focused, badgeCount }) => {
 
 export const TabNavigator = () => {
   const { cartCount, favorites } = useAppContext();
+  const insets = useSafeAreaInsets();
+
+  // Dynamic bottom inset handling for physical devices:
+  // On Android with 3-button navigation, insets.bottom is typically 48-56dp.
+  // On Android with gesture navigation, insets.bottom is typically 16-24dp.
+  // We ensure a robust minimum safe area padding so labels and icons are never covered.
+  const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 16 : 8);
+  const barHeight = 56 + bottomInset;
 
   return (
     <Tab.Navigator
@@ -62,7 +71,19 @@ export const TabNavigator = () => {
         },
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textMuted,
-        tabBarStyle: styles.tabBar,
+        tabBarStyle: {
+          backgroundColor: colors.surface,
+          borderTopColor: colors.borderLight,
+          borderTopWidth: 1,
+          height: barHeight,
+          paddingBottom: bottomInset + 2,
+          paddingTop: 6,
+          elevation: 12,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: -3 },
+          shadowOpacity: 0.08,
+          shadowRadius: 6,
+        },
         tabBarLabelStyle: styles.tabBarLabel,
       })}>
       <Tab.Screen name="Home" component={HomeScreen} />
@@ -75,22 +96,9 @@ export const TabNavigator = () => {
 };
 
 const styles = StyleSheet.create({
-  tabBar: {
-    backgroundColor: colors.surface,
-    borderTopColor: colors.borderLight,
-    borderTopWidth: 1,
-    height: 62,
-    paddingBottom: 8,
-    paddingTop: 6,
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-  },
   tabBarLabel: {
-    fontSize: 10,
-    fontWeight: typography.weights.medium,
+    fontSize: 11,
+    fontWeight: typography.weights.bold,
     marginTop: 2,
   },
   iconContainer: {
@@ -98,14 +106,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     position: 'relative',
     width: 32,
-    height: 28,
+    height: 26,
   },
   iconText: {
-    fontSize: 20,
-    opacity: 0.65,
+    fontSize: 21,
   },
   focusedIconText: {
-    opacity: 1,
     transform: [{ scale: 1.15 }],
   },
   activeDot: {

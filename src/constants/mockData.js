@@ -587,6 +587,22 @@ export const INITIAL_NOTIFICATIONS = [
   },
   {
     id: 'notif-3',
+    title: 'Fresh Morning Harvest 🥬',
+    message: 'Crisp spinach, broccoli, and coriander harvested this morning are now in stock.',
+    time: '3 hours ago',
+    unread: true,
+    icon: '🥦',
+  },
+  {
+    id: 'notif-4',
+    title: 'Weekend Super Deals 💰',
+    message: 'Get flat ₹50 cashback on all orders above ₹399 this weekend using UPI payments.',
+    time: '5 hours ago',
+    unread: false,
+    icon: '⚡',
+  },
+  {
+    id: 'notif-5',
     title: 'Welcome to FreshVeg 🌱',
     message: 'Thanks for choosing farm-fresh vegetables directly from trusted farmers!',
     time: 'Yesterday',
