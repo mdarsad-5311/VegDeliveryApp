@@ -1,12 +1,18 @@
 {
   "name": "VegDeliveryApp",
-  "version": "0.0.1",
+  "version": "1.0.0",
+  "description": "FreshVeg - Farm Fresh Vegetable & Grocery Delivery Mobile App built with React Native CLI",
+  "author": "mdarsad-5311 <mdarsadkgn5311@gmail.com>",
+  "license": "MIT",
   "private": true,
   "scripts": {
+    "start": "react-native start",
     "android": "react-native run-android",
     "ios": "react-native run-ios",
+    "bundle:android": "react-native bundle --platform android --dev false --entry-file index.js --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res",
+    "build:release": "npm run bundle:android && cd android && ./gradlew assembleRelease",
+    "clean:android": "cd android && ./gradlew clean",
     "lint": "eslint .",
-    "start": "react-native start",
     "test": "jest"
   },
   "dependencies": {

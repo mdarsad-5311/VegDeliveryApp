@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import colors from '../../constants/colors';
 import typography from '../../constants/typography';
-import { spacing, borderRadius } from '../../constants/theme';
+import { spacing } from '../../constants/theme';
 
 export const CategoryItem = ({ category, isSelected, onPress }) => {
   return (

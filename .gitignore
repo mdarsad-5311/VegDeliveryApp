@@ -73,3 +73,13 @@ yarn-error.log
 !.yarn/releases
 !.yarn/sdks
 !.yarn/versions
+
+# Local Release and QA outputs
+FreshVeg_Release/
+*.apk
+*.log
+*.png
+!src/assets/**/*.png
+scripts/testing/*.xml
+scripts/testing/*.png
+

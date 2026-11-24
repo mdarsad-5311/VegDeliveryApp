@@ -12,7 +12,7 @@ import colors from '../../constants/colors';
 import typography from '../../constants/typography';
 import { spacing } from '../../constants/theme';
 
-const { width, height } = Dimensions.get('window');
+const { width } = Dimensions.get('window');
 
 export const SplashScreen = ({ navigation }) => {
   const fadeAnim = useRef(new Animated.Value(0)).current;

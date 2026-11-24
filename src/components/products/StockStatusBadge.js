@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import colors from '../../constants/colors';
 import typography from '../../constants/typography';
-import { spacing, borderRadius } from '../../constants/theme';
+import { borderRadius } from '../../constants/theme';
 
 export const StockStatusBadge = ({ stockInfo, style }) => {
   if (!stockInfo) return null;

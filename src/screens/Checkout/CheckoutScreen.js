@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -22,7 +22,6 @@ export const CheckoutScreen = ({ navigation }) => {
     cartSubtotal,
     appliedCoupon,
     selectedAddress,
-    clearCart,
     placeOrder,
   } = useAppContext();
 
@@ -211,6 +210,7 @@ export const CheckoutScreen = ({ navigation }) => {
       };
 
       const newOrder = await placeOrder(orderData);
+      setPlacedOrderDetails(newOrder);
       setIsSubmitting(false);
 
       // Navigate directly to dedicated OrderConfirmationScreen

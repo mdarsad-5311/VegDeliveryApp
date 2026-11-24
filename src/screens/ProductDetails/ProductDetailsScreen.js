@@ -27,7 +27,6 @@ import {
 export const ProductDetailsScreen = ({ navigation, route }) => {
   const {
     addToCart,
-    cartCount,
     getItemQuantity,
     isFavorite,
     toggleFavorite,
