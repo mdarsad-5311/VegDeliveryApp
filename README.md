@@ -109,3 +109,4 @@ npm run android
 1. Configure Django REST Framework backend with vegetable inventory models and endpoints.
 2. Connect mobile app services to Django APIs.
 3. Implement cart state management and checkout workflow.
+# VegDeliveryApp
