@@ -76,7 +76,7 @@ export const SplashScreen = ({ navigation }) => {
         </View>
 
         {/* Brand Name */}
-        <Animated.View style={{ opacity: textFadeAnim, alignItems: 'center' }}>
+        <Animated.View style={[{ opacity: textFadeAnim }, styles.brandContainer]}>
           <Text style={styles.appName}>FreshVeg</Text>
           <View style={styles.taglineBadge}>
             <Text style={styles.tagline}>Fresh Vegetables, Delivered Fresh</Text>
@@ -149,6 +149,9 @@ const styles = StyleSheet.create({
     color: colors.primaryLight,
     fontWeight: typography.weights.medium,
     letterSpacing: 0.5,
+  },
+  brandContainer: {
+    alignItems: 'center',
   },
   bottomFooter: {
     position: 'absolute',

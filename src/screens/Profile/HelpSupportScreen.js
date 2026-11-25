@@ -163,7 +163,7 @@ export const HelpSupportScreen = ({ navigation }) => {
                 activeOpacity={0.8}
                 onPress={handleCallSupport}
                 accessibilityLabel="Call Customer Support">
-                <View style={[styles.contactIconCircle, { backgroundColor: '#E8F5E9' }]}>
+                <View style={[styles.contactIconCircle, styles.contactIconCall]}>
                   <Text style={styles.contactIcon}>📞</Text>
                 </View>
                 <Text style={styles.contactTitle}>Call Us</Text>
@@ -176,7 +176,7 @@ export const HelpSupportScreen = ({ navigation }) => {
                 activeOpacity={0.8}
                 onPress={handleWhatsAppChat}
                 accessibilityLabel="WhatsApp Chat">
-                <View style={[styles.contactIconCircle, { backgroundColor: '#E8F8F5' }]}>
+                <View style={[styles.contactIconCircle, styles.contactIconWhatsApp]}>
                   <Text style={styles.contactIcon}>💬</Text>
                 </View>
                 <Text style={styles.contactTitle}>WhatsApp</Text>
@@ -189,7 +189,7 @@ export const HelpSupportScreen = ({ navigation }) => {
                 activeOpacity={0.8}
                 onPress={handleEmailSupport}
                 accessibilityLabel="Email Customer Support">
-                <View style={[styles.contactIconCircle, { backgroundColor: '#FFF3E0' }]}>
+                <View style={[styles.contactIconCircle, styles.contactIconEmail]}>
                   <Text style={styles.contactIcon}>✉️</Text>
                 </View>
                 <Text style={styles.contactTitle}>Email</Text>
@@ -713,6 +713,15 @@ const styles = StyleSheet.create({
     fontSize: typography.sizes.sm + 1,
     fontWeight: typography.weights.bold,
     color: colors.surface,
+  },
+  contactIconCall: {
+    backgroundColor: '#E8F5E9',
+  },
+  contactIconWhatsApp: {
+    backgroundColor: '#E8F8F5',
+  },
+  contactIconEmail: {
+    backgroundColor: '#FFF3E0',
   },
 });
 

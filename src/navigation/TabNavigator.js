@@ -39,6 +39,24 @@ const TabIcon = ({ name, focused, badgeCount }) => {
   );
 };
 
+const getTabBarIcon = (routeName, cartCount, favoritesCount) => {
+  return function RouteTabBarIcon({ focused }) {
+    let badge = 0;
+    if (routeName === 'Cart') {
+      badge = cartCount;
+    } else if (routeName === 'Favorites') {
+      badge = favoritesCount;
+    }
+    return (
+      <TabIcon
+        name={routeName}
+        focused={focused}
+        badgeCount={badge}
+      />
+    );
+  };
+};
+
 export const TabNavigator = () => {
   const { cartCount, favorites } = useAppContext();
   const insets = useSafeAreaInsets();
@@ -54,21 +72,7 @@ export const TabNavigator = () => {
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
-        tabBarIcon: ({ focused }) => {
-          let badge = 0;
-          if (route.name === 'Cart') {
-            badge = cartCount;
-          } else if (route.name === 'Favorites') {
-            badge = favorites?.length || 0;
-          }
-          return (
-            <TabIcon
-              name={route.name}
-              focused={focused}
-              badgeCount={badge}
-            />
-          );
-        },
+        tabBarIcon: getTabBarIcon(route.name, cartCount, favorites?.length || 0),
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textMuted,
         tabBarStyle: {
