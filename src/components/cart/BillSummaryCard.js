@@ -18,16 +18,16 @@ export const BillSummaryCard = ({
     <View style={styles.card}>
       <Text style={styles.cardTitle}>Bill Details 🧾</Text>
 
-      {/* Item Total */}
+      {/* Item Total / Subtotal */}
       <View style={styles.row}>
-        <Text style={styles.label}>Item Total (Subtotal)</Text>
+        <Text style={styles.label}>Subtotal</Text>
         <Text style={styles.value}>₹{subtotal}</Text>
       </View>
 
-      {/* Delivery Fee */}
+      {/* Delivery Charge */}
       <View style={styles.row}>
         <View style={styles.labelGroup}>
-          <Text style={styles.label}>Delivery Partner Fee</Text>
+          <Text style={styles.label}>Delivery Charge</Text>
           {isFreeDelivery && (
             <View style={styles.freeBadge}>
               <Text style={styles.freeBadgeText}>FREE</Text>
@@ -75,7 +75,7 @@ export const BillSummaryCard = ({
       {/* Grand Total */}
       <View style={styles.totalRow}>
         <View>
-          <Text style={styles.totalLabel}>To Pay</Text>
+          <Text style={styles.totalLabel}>Total Amount</Text>
           <Text style={styles.inclusiveText}>Inclusive of all taxes</Text>
         </View>
         <Text style={styles.totalValue}>₹{grandTotal}</Text>

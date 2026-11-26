@@ -67,10 +67,21 @@ export const CartItemCard = ({
           {/* Quantity Stepper */}
           <View style={styles.stepper}>
             <TouchableOpacity
-              style={styles.stepperBtn}
+              style={[
+                styles.stepperBtn,
+                quantity <= 1 && styles.stepperBtnDisabled,
+              ]}
               activeOpacity={0.7}
-              onPress={() => onDecrement && onDecrement(product.id)}>
-              <Text style={styles.stepperBtnText}>−</Text>
+              disabled={quantity <= 1}
+              onPress={() => onDecrement && onDecrement(product.id)}
+              accessibilityLabel={`Decrease quantity of ${product.name}`}>
+              <Text
+                style={[
+                  styles.stepperBtnText,
+                  quantity <= 1 && styles.stepperTextDisabled,
+                ]}>
+                −
+              </Text>
             </TouchableOpacity>
 
             <View style={styles.countBox}>
@@ -84,7 +95,8 @@ export const CartItemCard = ({
               ]}
               activeOpacity={0.7}
               disabled={isMaxStock}
-              onPress={() => onIncrement && onIncrement(product)}>
+              onPress={() => onIncrement && onIncrement(product)}
+              accessibilityLabel={`Increase quantity of ${product.name}`}>
               <Text
                 style={[
                   styles.stepperBtnText,
@@ -99,8 +111,9 @@ export const CartItemCard = ({
           <TouchableOpacity
             style={styles.removeBtn}
             activeOpacity={0.7}
-            onPress={() => onRemove && onRemove(product.id)}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            onPress={() => onRemove && onRemove(product)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel={`Remove ${product.name} from cart`}>
             <Text style={styles.removeIcon}>🗑️</Text>
             <Text style={styles.removeText}>Remove</Text>
           </TouchableOpacity>

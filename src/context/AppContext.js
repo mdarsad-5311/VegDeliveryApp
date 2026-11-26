@@ -16,6 +16,9 @@ export const STORAGE_KEY_ORDERS = '@vegdelivery_orders';
 export const STORAGE_KEY_USER_PROFILE = '@vegdelivery_user_profile';
 export const STORAGE_KEY_CART = '@vegdelivery_cart';
 
+export const DEFAULT_DELIVERY_CHARGE = 30;
+export const FREE_DELIVERY_THRESHOLD = 199;
+
 export const DEFAULT_USER_PROFILE = {
   name: 'Kira Sharma',
   phone: '9876543210',
@@ -355,6 +358,26 @@ export const AppProvider = ({ children }) => {
   const [cart, setCart] = useState({});
   const [isCartHydrated, setIsCartHydrated] = useState(false);
 
+  // Global Toast State
+  const [toast, setToast] = useState({
+    visible: false,
+    message: '',
+    type: 'success',
+  });
+
+  const showToast = useCallback((message, type = 'success') => {
+    if (!message) return;
+    setToast({
+      visible: true,
+      message,
+      type,
+    });
+  }, []);
+
+  const hideToast = useCallback(() => {
+    setToast(prev => ({ ...prev, visible: false }));
+  }, []);
+
   // Coupon state
   const [appliedCoupon, setAppliedCoupon] = useState(null);
 
@@ -509,6 +532,18 @@ export const AppProvider = ({ children }) => {
     );
   }, [cart]);
 
+  // Configurable delivery fee and final total
+  const deliveryFee = useMemo(() => {
+    return cartSubtotal >= FREE_DELIVERY_THRESHOLD || cartSubtotal === 0
+      ? 0
+      : DEFAULT_DELIVERY_CHARGE;
+  }, [cartSubtotal]);
+
+  const cartTotal = useMemo(() => {
+    const couponDiscount = appliedCoupon ? appliedCoupon.discount : 0;
+    return Math.max(0, cartSubtotal + deliveryFee - couponDiscount);
+  }, [cartSubtotal, deliveryFee, appliedCoupon]);
+
   // Add item to cart with quantity, unit and stock validation
   const addToCart = useCallback(
     (product, quantityToAdd = 1, selectedUnit = null) => {
@@ -523,20 +558,20 @@ export const AppProvider = ({ children }) => {
           ? 0
           : 50;
 
+      const existing = cart[product.id];
+      const wasExisting = !!existing;
+      const currentQty = existing ? existing.quantity : 0;
+      let newQty = currentQty + quantityToAdd;
       let isExceeded = false;
-      let updatedQty = 0;
+
+      if (newQty > maxStock) {
+        newQty = maxStock;
+        isExceeded = true;
+      }
+
+      const updatedQty = newQty;
 
       setCart(prev => {
-        const existing = prev[product.id];
-        const currentQty = existing ? existing.quantity : 0;
-        let newQty = currentQty + quantityToAdd;
-
-        if (newQty > maxStock) {
-          newQty = maxStock;
-          isExceeded = true;
-        }
-
-        updatedQty = newQty;
         if (newQty <= 0) {
           const copy = { ...prev };
           delete copy[product.id];
@@ -563,24 +598,22 @@ export const AppProvider = ({ children }) => {
         };
       });
 
-      if (isExceeded) {
-        return {
-          success: true,
-          exceeded: true,
-          quantity: updatedQty,
-          message: `Maximum available stock reached (${maxStock} items)`,
-        };
-      }
+      const message = isExceeded
+        ? `Maximum available stock reached (${maxStock} items)`
+        : wasExisting
+        ? `Updated ${product.name} quantity to ${updatedQty}`
+        : `Added ${product.name} to cart!`;
+
+      showToast(message, isExceeded ? 'warning' : 'success');
 
       return {
         success: true,
+        exceeded: isExceeded,
         quantity: updatedQty,
-        message: `Added ${quantityToAdd} item${
-          quantityToAdd > 1 ? 's' : ''
-        } to basket!`,
+        message,
       };
     },
-    [],
+    [cart, showToast],
   );
 
   // Update specific item quantity directly
@@ -604,16 +637,14 @@ export const AppProvider = ({ children }) => {
     });
   }, []);
 
-  // Remove or decrement item from cart
+  // Decrement item from cart (never decreases below 1)
   const removeFromCart = useCallback(productId => {
     if (!productId) return;
     setCart(prev => {
       const existing = prev[productId];
       if (!existing) return prev;
       if (existing.quantity <= 1) {
-        const copy = { ...prev };
-        delete copy[productId];
-        return copy;
+        return prev; // Stepper decrement never reduces below 1
       }
       return {
         ...prev,
@@ -642,23 +673,31 @@ export const AppProvider = ({ children }) => {
   );
 
   // Remove item completely from cart
-  const removeCartItem = useCallback(productId => {
-    if (!productId) return;
-    setCart(prev => {
-      const copy = { ...prev };
-      delete copy[productId];
-      return copy;
-    });
-  }, []);
+  const removeCartItem = useCallback(
+    productId => {
+      if (!productId) return;
+      setCart(prev => {
+        const existing = prev[productId];
+        const copy = { ...prev };
+        delete copy[productId];
+        if (existing) {
+          showToast(`Removed ${existing.product.name} from cart`, 'info');
+        }
+        return copy;
+      });
+    },
+    [showToast],
+  );
 
   // Clear all items in cart
   const clearCart = useCallback(() => {
     setCart({});
     setAppliedCoupon(null);
+    showToast('Shopping cart cleared', 'info');
     AsyncStorage.removeItem(STORAGE_KEY_CART).catch(err => {
       console.warn('Failed to clear cart storage:', err);
     });
-  }, []);
+  }, [showToast]);
 
   // Apply discount coupon
   const applyCoupon = useCallback((code, currentSubtotal) => {
@@ -1195,6 +1234,10 @@ export const AppProvider = ({ children }) => {
       cart,
       cartCount,
       cartSubtotal,
+      deliveryFee,
+      cartTotal,
+      DEFAULT_DELIVERY_CHARGE,
+      FREE_DELIVERY_THRESHOLD,
       addToCart,
       removeFromCart,
       getItemQuantity,
@@ -1205,6 +1248,11 @@ export const AppProvider = ({ children }) => {
       appliedCoupon,
       applyCoupon,
       removeCoupon,
+
+      // Toast Notification
+      toast,
+      showToast,
+      hideToast,
 
       // Favorites
       favorites,
@@ -1244,6 +1292,8 @@ export const AppProvider = ({ children }) => {
       cart,
       cartCount,
       cartSubtotal,
+      deliveryFee,
+      cartTotal,
       addToCart,
       removeFromCart,
       getItemQuantity,
@@ -1254,6 +1304,9 @@ export const AppProvider = ({ children }) => {
       appliedCoupon,
       applyCoupon,
       removeCoupon,
+      toast,
+      showToast,
+      hideToast,
       favorites,
       toggleFavorite,
       isFavorite,

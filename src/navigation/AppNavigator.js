@@ -1,6 +1,8 @@
 import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+
+export const navigationRef = createNavigationContainerRef();
 import TabNavigator from './TabNavigator';
 import SplashScreen from '../screens/Splash/SplashScreen';
 import WelcomeScreen from '../screens/Welcome/WelcomeScreen';
@@ -28,7 +30,7 @@ const Stack = createNativeStackNavigator();
 
 export const AppNavigator = () => {
   return (
-    <NavigationContainer>
+    <NavigationContainer ref={navigationRef}>
       <Stack.Navigator
         initialRouteName="Splash"
         screenOptions={{

@@ -19,6 +19,8 @@ export const CartScreen = ({ navigation }) => {
     cart,
     cartCount,
     cartSubtotal,
+    deliveryFee,
+    cartTotal,
     addToCart,
     removeFromCart,
     removeCartItem,
@@ -28,12 +30,10 @@ export const CartScreen = ({ navigation }) => {
   } = useAppContext();
 
   const cartList = Object.values(cart);
-  const deliveryFee = cartSubtotal >= 199 || cartSubtotal === 0 ? 0 : 30;
-  const couponDiscount = appliedCoupon ? appliedCoupon.discount : 0;
-  const grandTotal = Math.max(0, cartSubtotal + deliveryFee - couponDiscount);
   const freeDeliveryThreshold = 199;
   const amountToFreeDelivery = Math.max(0, freeDeliveryThreshold - cartSubtotal);
   const progressRatio = Math.min(1, cartSubtotal / freeDeliveryThreshold);
+  const grandTotal = cartTotal !== undefined ? cartTotal : Math.max(0, cartSubtotal + (deliveryFee || 0));
 
   // Stepper increment with stock check
   const handleIncrement = useCallback(
@@ -50,7 +50,7 @@ export const CartScreen = ({ navigation }) => {
     [addToCart],
   );
 
-  // Stepper decrement
+  // Stepper decrement (stops at minimum 1)
   const handleDecrement = useCallback(
     productId => {
       removeFromCart(productId);
@@ -58,12 +58,29 @@ export const CartScreen = ({ navigation }) => {
     [removeFromCart],
   );
 
-  // Explicit item removal
+  // Explicit item removal with confirmation
   const handleRemove = useCallback(
-    productId => {
-      removeCartItem(productId);
+    productOrId => {
+      const product = typeof productOrId === 'object' ? productOrId : cart[productOrId]?.product;
+      const productId = product?.id || productOrId;
+      const productName = product?.name || 'this item';
+
+      Alert.alert(
+        'Remove from Cart',
+        `Are you sure you want to remove "${productName}" from your cart?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Remove',
+            style: 'destructive',
+            onPress: () => {
+              removeCartItem(productId);
+            },
+          },
+        ],
+      );
     },
-    [removeCartItem],
+    [cart, removeCartItem],
   );
 
   // Navigate to item details
@@ -76,10 +93,10 @@ export const CartScreen = ({ navigation }) => {
     [navigation],
   );
 
-  // Navigate to shopping
+  // Navigate to product listing screen
   const handleContinueShopping = useCallback(() => {
     if (navigation && navigation.navigate) {
-      navigation.navigate('MainTabs', { screen: 'Home' });
+      navigation.navigate('ProductListing');
     }
   }, [navigation]);
 
@@ -121,11 +138,11 @@ export const CartScreen = ({ navigation }) => {
           /* Empty Cart State */
           <View style={styles.emptyContainer}>
             <View style={styles.emptyIconCircle}>
-              <Text style={styles.emptyIcon}>🧺</Text>
+              <Text style={styles.emptyIcon}>🛒</Text>
             </View>
-            <Text style={styles.emptyTitle}>Your Basket is Empty</Text>
+            <Text style={styles.emptyTitle}>Your Cart is Empty</Text>
             <Text style={styles.emptySubtitle}>
-              Looks like you haven't added anything yet. Explore our farm-fresh vegetables and fruits!
+              Looks like you haven't added anything to your cart yet. Explore our farm-fresh vegetables and fruits!
             </Text>
             <TouchableOpacity
               style={styles.shopButton}
