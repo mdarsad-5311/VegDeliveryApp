@@ -11,15 +11,19 @@ import FreshVegLogo from '../../components/illustrations/FreshVegLogo';
 import colors from '../../constants/colors';
 import typography from '../../constants/typography';
 import { spacing } from '../../constants/theme';
+import useAppContext from '../../hooks/useAppContext';
 
 const { width } = Dimensions.get('window');
 
 export const SplashScreen = ({ navigation }) => {
+  const { verifySession } = useAppContext();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.85)).current;
   const textFadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    let isMounted = true;
+
     // Smooth entrance animation
     Animated.sequence([
       Animated.parallel([
@@ -42,13 +46,37 @@ export const SplashScreen = ({ navigation }) => {
       }),
     ]).start();
 
-    // Auto navigate to Welcome Screen after 2.6 seconds
-    const timer = setTimeout(() => {
-      navigation.replace('Welcome');
-    }, 2600);
+    // Verify session in parallel with minimum splash presentation time (1400ms)
+    // so animation displays smoothly without flickering
+    const startTime = Date.now();
+    const MIN_SPLASH_TIME = 1400;
 
-    return () => clearTimeout(timer);
-  }, [fadeAnim, scaleAnim, textFadeAnim, navigation]);
+    verifySession()
+      .then(result => {
+        if (!isMounted) return;
+        const elapsed = Date.now() - startTime;
+        const remaining = Math.max(0, MIN_SPLASH_TIME - elapsed);
+
+        setTimeout(() => {
+          if (!isMounted) return;
+          if (result && result.authenticated) {
+            navigation.replace('MainTabs');
+          } else {
+            navigation.replace('Welcome');
+          }
+        }, remaining);
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setTimeout(() => {
+          if (isMounted) navigation.replace('Welcome');
+        }, 300);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [fadeAnim, scaleAnim, textFadeAnim, navigation, verifySession]);
 
   return (
     <View style={styles.container}>

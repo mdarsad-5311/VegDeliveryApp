@@ -18,8 +18,11 @@ import CustomCheckbox from '../../components/common/CustomCheckbox';
 import colors from '../../constants/colors';
 import typography from '../../constants/typography';
 import { spacing } from '../../constants/theme';
+import useAppContext from '../../hooks/useAppContext';
+import { authAPI, formatApiError } from '../../services';
 
 export const RegisterScreen = ({ navigation }) => {
+  const { loginUser } = useAppContext();
   const [fullName, setFullName] = useState('');
   const [mobileNumber, setMobileNumber] = useState('');
   const [email, setEmail] = useState('');
@@ -69,18 +72,72 @@ export const RegisterScreen = ({ navigation }) => {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleRegister = () => {
-    if (!validate()) return;
+  const handleRegister = async () => {
+    if (!validate() || isLoading) return;
 
     setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
-      // Navigate to OTP verification with mobile number
-      navigation.navigate('OTPVerification', {
-        mobileNumber,
-        nextScreen: 'MainTabs',
+    setErrors({});
+
+    try {
+      const cleanMobile = mobileNumber.replace(/\D/g, '');
+      const response = await authAPI.register({
+        full_name: fullName.trim(),
+        email: email.trim().toLowerCase(),
+        mobile_number: cleanMobile,
+        password: password,
+        confirm_password: confirmPassword,
       });
-    }, 800);
+
+      if (response && (response.status === 201 || response.status === 200)) {
+        const { token, user } = response.data;
+        if (token && user) {
+          await loginUser(user, token);
+        }
+        setIsLoading(false);
+        navigation.replace('MainTabs');
+      }
+    } catch (err) {
+      setIsLoading(false);
+      const apiErrors = {};
+      if (err.response && err.response.data) {
+        const data = err.response.data;
+        if (data.full_name) {
+          apiErrors.fullName = Array.isArray(data.full_name)
+            ? data.full_name[0]
+            : data.full_name;
+        }
+        if (data.email) {
+          apiErrors.email = Array.isArray(data.email)
+            ? data.email[0]
+            : data.email;
+        }
+        if (data.mobile_number) {
+          apiErrors.mobileNumber = Array.isArray(data.mobile_number)
+            ? data.mobile_number[0]
+            : data.mobile_number;
+        }
+        if (data.password) {
+          apiErrors.password = Array.isArray(data.password)
+            ? data.password[0]
+            : data.password;
+        }
+        if (data.confirm_password) {
+          apiErrors.confirmPassword = Array.isArray(data.confirm_password)
+            ? data.confirm_password[0]
+            : data.confirm_password;
+        }
+        if (data.non_field_errors) {
+          apiErrors.general = Array.isArray(data.non_field_errors)
+            ? data.non_field_errors[0]
+            : data.non_field_errors;
+        } else if (data.detail) {
+          apiErrors.general = data.detail;
+        }
+      } else {
+        apiErrors.general = formatApiError(err);
+      }
+      setErrors(apiErrors);
+    }
   };
 
   const handleDemoFill = () => {
@@ -125,6 +182,13 @@ export const RegisterScreen = ({ navigation }) => {
               Sign up to enjoy daily farm-fresh vegetable deliveries.
             </Text>
           </View>
+
+          {/* General Backend Error Banner */}
+          {Boolean(errors.general) && (
+            <View style={styles.generalErrorBanner}>
+              <Text style={styles.generalErrorText}>{errors.general}</Text>
+            </View>
+          )}
 
           <View style={styles.form}>
             {/* Full Name */}
@@ -298,6 +362,20 @@ const styles = StyleSheet.create({
     fontSize: typography.sizes.sm + 1,
     color: colors.textSecondary,
     lineHeight: 20,
+  },
+  generalErrorBanner: {
+    backgroundColor: '#FFEBEE',
+    borderWidth: 1,
+    borderColor: '#FFCDD2',
+    borderRadius: 8,
+    padding: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  generalErrorText: {
+    color: colors.error,
+    fontSize: typography.sizes.xs + 1,
+    fontWeight: typography.weights.medium,
+    textAlign: 'center',
   },
   form: {
     marginTop: spacing.xs,

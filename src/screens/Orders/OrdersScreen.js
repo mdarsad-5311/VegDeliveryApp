@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,8 @@ import {
   FlatList,
   TouchableOpacity,
   Alert,
+  RefreshControl,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import colors from '../../constants/colors';
@@ -15,9 +17,30 @@ import useAppContext from '../../hooks/useAppContext';
 import { CancelOrderModal } from '../../components/orders/CancelOrderModal';
 
 export const OrdersScreen = ({ navigation }) => {
-  const { orders, cancelOrder, reorder } = useAppContext();
+  const {
+    orders,
+    isOrdersLoading,
+    fetchOrders,
+    cancelOrder,
+    reorder,
+    isAuthenticated,
+  } = useAppContext();
   const [selectedTab, setSelectedTab] = useState('active'); // 'active' | 'completed' | 'cancelled'
   const [cancelModalOrderId, setCancelModalOrderId] = useState(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Fetch orders from backend on mount
+  useEffect(() => {
+    if (isAuthenticated) {
+      fetchOrders();
+    }
+  }, [isAuthenticated, fetchOrders]);
+
+  const onRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    await fetchOrders();
+    setIsRefreshing(false);
+  }, [fetchOrders]);
 
   // Categorize orders
   const activeOrders = useMemo(
@@ -25,18 +48,26 @@ export const OrdersScreen = ({ navigation }) => {
       orders.filter(
         o =>
           o.status !== 'Delivered' &&
-          o.status !== 'Cancelled',
+          o.status !== 'Cancelled' &&
+          o.order_status !== 'delivered' &&
+          o.order_status !== 'cancelled',
       ),
     [orders],
   );
 
   const completedOrders = useMemo(
-    () => orders.filter(o => o.status === 'Delivered'),
+    () =>
+      orders.filter(
+        o => o.status === 'Delivered' || o.order_status === 'delivered',
+      ),
     [orders],
   );
 
   const cancelledOrders = useMemo(
-    () => orders.filter(o => o.status === 'Cancelled'),
+    () =>
+      orders.filter(
+        o => o.status === 'Cancelled' || o.order_status === 'cancelled',
+      ),
     [orders],
   );
 
@@ -59,8 +90,23 @@ export const OrdersScreen = ({ navigation }) => {
     { id: 'cancelled', label: 'Cancelled', count: cancelledOrders.length },
   ];
 
-  const handleOpenCancel = orderId => {
-    setCancelModalOrderId(orderId);
+  const handleOpenCancel = order => {
+    const rawStatus = (order.order_status || order.status || '').toLowerCase();
+    const isEligible =
+      rawStatus === 'pending' ||
+      rawStatus === 'confirmed' ||
+      rawStatus === 'order placed' ||
+      rawStatus === 'order confirmed';
+
+    if (!isEligible) {
+      Alert.alert(
+        'Cancellation Unavailable',
+        'Orders that are packed or dispatched for delivery cannot be cancelled.',
+        [{ text: 'OK' }],
+      );
+      return;
+    }
+    setCancelModalOrderId(order.id);
   };
 
   const handleConfirmCancel = async reason => {
@@ -172,7 +218,7 @@ export const OrdersScreen = ({ navigation }) => {
                   style={styles.cancelActionBtn}
                   activeOpacity={0.7}
                   accessibilityLabel="Cancel Order"
-                  onPress={() => handleOpenCancel(item.id)}>
+                  onPress={() => handleOpenCancel(item)}>
                   <Text style={styles.cancelActionText}>Cancel</Text>
                 </TouchableOpacity>
 
@@ -215,6 +261,17 @@ export const OrdersScreen = ({ navigation }) => {
   };
 
   const renderEmptyState = () => {
+    if (isOrdersLoading && orders.length === 0) {
+      return (
+        <View style={styles.emptyContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={[styles.emptySubtitle, { marginTop: spacing.md }]}>
+            Loading your orders...
+          </Text>
+        </View>
+      );
+    }
+
     const isAct = selectedTab === 'active';
     const isComp = selectedTab === 'completed';
     const icon = isAct ? '📦' : isComp ? '🥬' : '🚫';
@@ -316,6 +373,14 @@ export const OrdersScreen = ({ navigation }) => {
           renderItem={renderOrderItem}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={onRefresh}
+              colors={[colors.primary]}
+              tintColor={colors.primary}
+            />
+          }
           ListEmptyComponent={renderEmptyState}
         />
 

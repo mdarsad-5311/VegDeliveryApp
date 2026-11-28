@@ -5,7 +5,14 @@ import typography from '../../constants/typography';
 import { spacing, borderRadius } from '../../constants/theme';
 import { VEG_CATEGORIES } from '../../constants/mockData';
 
-export const CategoryPills = ({ selectedCategoryId, onSelectCategory }) => {
+export const CategoryPills = ({
+  categories = null,
+  selectedCategoryId,
+  onSelectCategory,
+}) => {
+  const categoriesList =
+    categories && categories.length > 0 ? categories : VEG_CATEGORIES;
+
   return (
     <View style={styles.container}>
       <ScrollView
@@ -31,7 +38,7 @@ export const CategoryPills = ({ selectedCategoryId, onSelectCategory }) => {
         </TouchableOpacity>
 
         {/* Category Pills */}
-        {VEG_CATEGORIES.map(cat => {
+        {categoriesList.map(cat => {
           const isSelected = selectedCategoryId === cat.id;
           return (
             <TouchableOpacity
@@ -39,7 +46,7 @@ export const CategoryPills = ({ selectedCategoryId, onSelectCategory }) => {
               style={[styles.pill, isSelected && styles.activePill]}
               activeOpacity={0.7}
               onPress={() => onSelectCategory(cat.id)}>
-              <Text style={styles.pillIcon}>{cat.icon}</Text>
+              <Text style={styles.pillIcon}>{cat.icon || '🥬'}</Text>
               <Text
                 style={[
                   styles.pillText,

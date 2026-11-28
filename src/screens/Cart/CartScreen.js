@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import colors from '../../constants/colors';
@@ -17,6 +18,10 @@ import { CartItemCard, CouponSection, BillSummaryCard } from '../../components/c
 export const CartScreen = ({ navigation }) => {
   const {
     cart,
+    backendCart,
+    isCartLoading,
+    fetchBackendCart,
+    isAuthenticated,
     cartCount,
     cartSubtotal,
     deliveryFee,
@@ -28,6 +33,16 @@ export const CartScreen = ({ navigation }) => {
     applyCoupon,
     removeCoupon,
   } = useAppContext();
+
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    if (isAuthenticated && typeof fetchBackendCart === 'function') {
+      await fetchBackendCart();
+    }
+    setRefreshing(false);
+  }, [isAuthenticated, fetchBackendCart]);
 
   const cartList = Object.values(cart);
   const freeDeliveryThreshold = 199;
@@ -157,7 +172,15 @@ export const CartScreen = ({ navigation }) => {
           <>
             <ScrollView
               contentContainerStyle={styles.scrollContent}
-              showsVerticalScrollIndicator={false}>
+              showsVerticalScrollIndicator={false}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={handleRefresh}
+                  colors={[colors.primary]}
+                  tintColor={colors.primary}
+                />
+              }>
               {/* Free Delivery Meter */}
               <View style={styles.freeDeliveryBanner}>
                 <View style={styles.meterHeader}>

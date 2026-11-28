@@ -1,10 +1,12 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
 import colors from '../../constants/colors';
 import typography from '../../constants/typography';
 import { spacing } from '../../constants/theme';
 
 export const CategoryItem = ({ category, isSelected, onPress }) => {
+  const [imageError, setImageError] = useState(false);
+
   return (
     <TouchableOpacity
       style={styles.container}
@@ -16,7 +18,16 @@ export const CategoryItem = ({ category, isSelected, onPress }) => {
           { backgroundColor: category.bgColor },
           isSelected && styles.selectedCircle,
         ]}>
-        <Text style={styles.icon}>{category.icon}</Text>
+        {category.image && !imageError ? (
+          <Image
+            source={{ uri: category.image }}
+            style={styles.categoryImage}
+            resizeMode="cover"
+            onError={() => setImageError(true)}
+          />
+        ) : (
+          <Text style={styles.icon}>{category.icon || '🥬'}</Text>
+        )}
       </View>
       <Text
         style={[
@@ -57,6 +68,11 @@ const styles = StyleSheet.create({
   },
   icon: {
     fontSize: 28,
+  },
+  categoryImage: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
   },
   categoryName: {
     fontSize: 11,

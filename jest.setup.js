@@ -82,3 +82,19 @@ jest.mock('react-native-gesture-handler', () => {
     Directions: {},
   };
 });
+
+// Mock react-native-razorpay
+jest.mock('react-native-razorpay', () => {
+  const mockOpen = jest.fn(async options => ({
+    razorpay_payment_id: 'pay_test_mock123',
+    razorpay_order_id: options?.order_id || 'order_test_mock123',
+    razorpay_signature: 'sig_test_mock123',
+  }));
+  return {
+    __esModule: true,
+    default: {
+      open: mockOpen,
+    },
+    open: mockOpen,
+  };
+});

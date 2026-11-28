@@ -10,6 +10,7 @@ export const AddressCard = ({
   onSelect,
   onEdit,
   onDelete,
+  onSetDefault,
 }) => {
   const {
     fullName,
@@ -100,6 +101,17 @@ export const AddressCard = ({
         </View>
 
         <View style={styles.buttonsGroup}>
+          {!isDefault && onSetDefault && (
+            <TouchableOpacity
+              style={styles.actionBtn}
+              activeOpacity={0.7}
+              onPress={() => onSetDefault && onSetDefault(address)}
+              accessibilityLabel="Set as default address">
+              <Text style={styles.actionIcon}>⭐</Text>
+              <Text style={styles.actionText}>Default</Text>
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity
             style={styles.actionBtn}
             activeOpacity={0.7}

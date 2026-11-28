@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,8 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  RefreshControl,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import colors from '../../constants/colors';
@@ -17,19 +19,49 @@ import { OrderTimeline } from '../../components/orders/OrderTimeline';
 
 export const OrderDetailsScreen = ({ route, navigation }) => {
   const { orderId, order } = route.params || {};
-  const { getOrderById, cancelOrder, reorder } = useAppContext();
+  const {
+    getOrderById,
+    cancelOrder,
+    reorder,
+    fetchOrderDetails,
+    isOrdersLoading,
+    isAuthenticated,
+  } = useAppContext();
 
   const [cancelModalVisible, setCancelModalVisible] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Fetch reactive order from context if available
   const contextOrder = orderId ? getOrderById(orderId) : null;
   const activeOrder = contextOrder || order || {};
 
   const displayOrderId = activeOrder.id || orderId || '#FV-98421';
+
+  // Fetch fresh order details on mount
+  useEffect(() => {
+    if (isAuthenticated && displayOrderId) {
+      fetchOrderDetails(displayOrderId);
+    }
+  }, [isAuthenticated, displayOrderId, fetchOrderDetails]);
+
+  const onRefresh = useCallback(async () => {
+    if (displayOrderId) {
+      setIsRefreshing(true);
+      await fetchOrderDetails(displayOrderId);
+      setIsRefreshing(false);
+    }
+  }, [displayOrderId, fetchOrderDetails]);
+
   const status = activeOrder.status || 'Order Placed';
-  const isDelivered = status === 'Delivered';
-  const isCancelled = status === 'Cancelled';
+  const rawStatus = (activeOrder.order_status || status).toLowerCase();
+  const isDelivered = status === 'Delivered' || rawStatus === 'delivered';
+  const isCancelled = status === 'Cancelled' || rawStatus === 'cancelled';
   const isActive = !isDelivered && !isCancelled;
+  const isEligibleToCancel =
+    rawStatus === 'pending' ||
+    rawStatus === 'confirmed' ||
+    rawStatus === 'order placed' ||
+    rawStatus === 'order confirmed';
 
   const items = activeOrder.items || [];
   const address = activeOrder.address;
@@ -47,6 +79,14 @@ export const OrderDetailsScreen = ({ route, navigation }) => {
       Alert.alert(
         'Cannot Cancel',
         'This order has already been delivered and cannot be cancelled.',
+        [{ text: 'OK' }],
+      );
+      return;
+    }
+    if (!isEligibleToCancel) {
+      Alert.alert(
+        'Cancellation Unavailable',
+        'Orders that are packed or dispatched for delivery cannot be cancelled.',
         [{ text: 'OK' }],
       );
       return;
@@ -114,7 +154,15 @@ export const OrderDetailsScreen = ({ route, navigation }) => {
 
         <ScrollView
           contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}>
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={onRefresh}
+              colors={[colors.primary]}
+              tintColor={colors.primary}
+            />
+          }>
           {/* Status Ribbon */}
           <View
             style={[

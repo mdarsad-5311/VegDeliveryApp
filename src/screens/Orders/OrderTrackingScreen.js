@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,8 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  RefreshControl,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import colors from '../../constants/colors';
@@ -16,15 +18,44 @@ import { OrderTimeline } from '../../components/orders/OrderTimeline';
 
 export const OrderTrackingScreen = ({ route, navigation }) => {
   const { orderId, order } = route.params || {};
-  const { getOrderById } = useAppContext();
+  const { getOrderById, fetchOrderDetails, isAuthenticated } = useAppContext();
 
-  const activeOrder = order || (orderId ? getOrderById(orderId) : null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const displayOrderId = activeOrder?.id || orderId || '#FV-84912';
-  const status = activeOrder?.status || 'Out for Delivery';
-  const stage = activeOrder?.stage !== undefined ? activeOrder.stage : 4;
-  const isCancelled = status === 'Cancelled';
-  const partner = activeOrder?.deliveryPartner || {
+  const displayOrderId = orderId || order?.id || '#FV-84912';
+
+  // Fetch latest tracking status from backend on mount
+  useEffect(() => {
+    if (isAuthenticated && displayOrderId) {
+      fetchOrderDetails(displayOrderId);
+    }
+  }, [isAuthenticated, displayOrderId, fetchOrderDetails]);
+
+  const onRefresh = useCallback(async () => {
+    if (displayOrderId) {
+      setIsRefreshing(true);
+      await fetchOrderDetails(displayOrderId);
+      setIsRefreshing(false);
+    }
+  }, [displayOrderId, fetchOrderDetails]);
+
+  const contextOrder = displayOrderId ? getOrderById(displayOrderId) : null;
+  const activeOrder = contextOrder || order || {};
+
+  const status = activeOrder.status || 'Order Placed';
+  const rawStatus = (activeOrder.order_status || status).toLowerCase();
+  const isCancelled = status === 'Cancelled' || rawStatus === 'cancelled';
+  const isDelivered = status === 'Delivered' || rawStatus === 'delivered';
+  const stage =
+    activeOrder.stage !== undefined
+      ? activeOrder.stage
+      : isDelivered
+      ? 5
+      : isCancelled
+      ? 0
+      : 2;
+
+  const partner = activeOrder.deliveryPartner || {
     name: 'Ramesh Kumar',
     phone: '+91 98220 12345',
     rating: '4.9',
@@ -32,10 +63,10 @@ export const OrderTrackingScreen = ({ route, navigation }) => {
     vehicle: 'Electric Cargo Scooter (MH-12-VG-4521)',
     avatar: '🛵',
   };
-  const address = activeOrder?.address;
-  const items = activeOrder?.items || [];
-  const grandTotal = activeOrder?.grandTotal || 0;
-  const timeline = activeOrder?.timeline || [];
+  const address = activeOrder.address;
+  const items = activeOrder.items || [];
+  const grandTotal = activeOrder.grandTotal || 0;
+  const timeline = activeOrder.timeline || [];
 
   const handleCallPartner = () => {
     Alert.alert(
@@ -79,7 +110,15 @@ export const OrderTrackingScreen = ({ route, navigation }) => {
 
         <ScrollView
           contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}>
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={onRefresh}
+              colors={[colors.primary]}
+              tintColor={colors.primary}
+            />
+          }>
           {/* Status & ETA Card */}
           <View
             style={[

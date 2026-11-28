@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,9 @@ import {
   TouchableOpacity,
   StatusBar,
   Share,
+  Image,
+  ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import colors from '../../constants/colors';
@@ -23,6 +26,11 @@ import {
   StockStatusBadge,
   AddToCartToast,
 } from '../../components/products';
+import {
+  productAPI,
+  normalizeProduct,
+  formatApiError,
+} from '../../services';
 
 export const ProductDetailsScreen = ({ navigation, route }) => {
   const {
@@ -32,17 +40,65 @@ export const ProductDetailsScreen = ({ navigation, route }) => {
     toggleFavorite,
   } = useAppContext();
 
-  // 1. Resolve Product Data from Route Params or Fallback
+  // 1. Resolve Initial Product Data from Route Params or Fallback
   const productParam = route?.params?.product;
-  const productIdParam = route?.params?.productId;
+  const productIdParam = route?.params?.productId || productParam?.id;
 
-  const product = useMemo(() => {
-    if (productParam) return productParam;
+  const initialProduct = useMemo(() => {
+    if (productParam) {
+      return productParam._backend
+        ? productParam
+        : normalizeProduct(productParam) || productParam;
+    }
     if (productIdParam) {
-      return ALL_PRODUCTS.find(p => p.id === productIdParam) || ALL_PRODUCTS[0];
+      const match = ALL_PRODUCTS.find(p => p.id === productIdParam);
+      return match ? normalizeProduct(match) || match : ALL_PRODUCTS[0];
     }
     return ALL_PRODUCTS[0];
   }, [productParam, productIdParam]);
+
+  // Live product state
+  const [product, setProduct] = useState(initialProduct);
+  const [isLoading, setIsLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [apiError, setApiError] = useState(null);
+  const [heroImageError, setHeroImageError] = useState(false);
+
+  // Fetch fresh product detail from backend
+  const fetchProductDetail = useCallback(
+    async (isPullRefresh = false) => {
+      const targetId = productIdParam || product?.id;
+      if (!targetId) return;
+
+      if (isPullRefresh) {
+        setRefreshing(true);
+      } else if (!product || !product.name) {
+        setIsLoading(true);
+      }
+      setApiError(null);
+
+      try {
+        const res = await productAPI.getById(targetId);
+        if (res.data) {
+          const normalized = normalizeProduct(res.data);
+          setProduct(normalized);
+        }
+      } catch (err) {
+        // Only set error if we have no product to display
+        if (!product || !product.name) {
+          setApiError(formatApiError(err));
+        }
+      } finally {
+        setIsLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [productIdParam, product],
+  );
+
+  useEffect(() => {
+    fetchProductDetail();
+  }, [fetchProductDetail]);
 
   // 2. Unit Options & Stock Info
   const unitOptions = useMemo(() => getProductUnitOptions(product), [product]);
@@ -60,7 +116,6 @@ export const ProductDetailsScreen = ({ navigation, route }) => {
   // Sync unit when product changes
   useEffect(() => {
     if (unitOptions.length > 0) {
-      // If product has a unit string matching one of the options
       const match = unitOptions.find(u => u.label === product.unit);
       setSelectedUnit(match || unitOptions[0]);
     }
@@ -140,10 +195,21 @@ export const ProductDetailsScreen = ({ navigation, route }) => {
     navigation.navigate('MainTabs', { screen: 'Cart' });
   };
 
+  if (isLoading && !product) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.centerLoading}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={styles.loadingText}>Loading vegetable details...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" backgroundColor={colors.surface} />
-      
+
       {/* Success Notification Toast */}
       <AddToCartToast
         visible={toastVisible}
@@ -159,38 +225,40 @@ export const ProductDetailsScreen = ({ navigation, route }) => {
             style={styles.navCircleBtn}
             activeOpacity={0.8}
             onPress={() => navigation.goBack()}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-            <Text style={styles.navBackArrow}>←</Text>
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Text style={styles.navIcon}>←</Text>
           </TouchableOpacity>
 
-          <View style={styles.navRightActions}>
+          <View style={styles.topNavRight}>
             <TouchableOpacity
               style={styles.navCircleBtn}
               activeOpacity={0.8}
               onPress={handleShare}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-              <Text style={styles.navActionIcon}>📤</Text>
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={styles.navIcon}>↗️</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[
-                styles.navCircleBtn,
-                favorited && styles.navCircleBtnActive,
-              ]}
+              style={styles.navCircleBtn}
               activeOpacity={0.8}
               onPress={() => toggleFavorite(product.id)}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-              <Text style={styles.navActionIcon}>
-                {favorited ? '❤️' : '🤍'}
-              </Text>
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={styles.navIcon}>{favorited ? '❤️' : '🤍'}</Text>
             </TouchableOpacity>
           </View>
         </View>
 
-        {/* Scrollable Content */}
         <ScrollView
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.scrollContent}>
+          contentContainerStyle={styles.scrollContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => fetchProductDetail(true)}
+              colors={[colors.primary]}
+              tintColor={colors.primary}
+            />
+          }>
           {/* 1. Large Hero Product Image Container */}
           <View
             style={[
@@ -212,7 +280,16 @@ export const ProductDetailsScreen = ({ navigation, route }) => {
               </View>
             )}
 
-            <Text style={styles.heroEmoji}>{product.emoji}</Text>
+            {product.image && !heroImageError ? (
+              <Image
+                source={{ uri: product.image }}
+                style={styles.heroImage}
+                resizeMode="contain"
+                onError={() => setHeroImageError(true)}
+              />
+            ) : (
+              <Text style={styles.heroEmoji}>{product.emoji || '🥬'}</Text>
+            )}
           </View>
 
           {/* 2. Main Product Info Card */}
@@ -238,64 +315,60 @@ export const ProductDetailsScreen = ({ navigation, route }) => {
               <Text style={styles.reviewsText}>
                 ({product.reviews || 250} customer reviews)
               </Text>
-              <Text style={styles.ratingDivider}>•</Text>
-              <Text style={styles.harvestText}>Farm-Fresh Harvest</Text>
-            </View>
-
-            {/* Pricing Section */}
-            <View style={styles.priceSection}>
-              <View style={styles.priceRow}>
-                <Text style={styles.sellingPrice}>₹{unitPrice}</Text>
-                {hasDiscount && (
-                  <Text style={styles.originalPrice}>
-                    ₹
-                    {Math.round(
-                      (product.originalPrice || 40) *
-                        (selectedUnit?.multiplier || 1),
-                    )}
-                  </Text>
-                )}
-                {hasDiscount && (
-                  <View style={styles.savingsPill}>
-                    <Text style={styles.savingsPillText}>
-                      Save {discountPercent}%
-                    </Text>
-                  </View>
-                )}
-              </View>
-              <Text style={styles.priceSub}>
-                Price for {selectedUnit?.label || product.unit} (Inclusive of all
-                taxes)
+              <Text style={styles.dotSeparator}>•</Text>
+              <Text style={styles.originText}>
+                {product.origin || 'Farm Fresh Direct'}
               </Text>
             </View>
 
-            {/* Divider */}
-            <View style={styles.divider} />
+            {/* Price Box */}
+            <View style={styles.priceContainer}>
+              <View style={styles.priceRow}>
+                <Text style={styles.currencySymbol}>₹</Text>
+                <Text style={styles.activePrice}>{unitPrice}</Text>
+                {hasDiscount && (
+                  <Text style={styles.originalPriceText}>
+                    ₹{Math.round(product.originalPrice * (selectedUnit?.multiplier || 1))}
+                  </Text>
+                )}
+                <Text style={styles.unitPerLabel}>
+                  / {selectedUnit ? selectedUnit.label : product.unit}
+                </Text>
+              </View>
 
-            {/* 3. Unit / Pack Selection */}
-            <UnitSelector
-              options={unitOptions}
-              selectedOption={selectedUnit}
-              onSelectOption={handleUnitSelect}
-              disabled={isOutOfStock}
-            />
+              {calculatedSavings > 0 && (
+                <View style={styles.savingsPill}>
+                  <Text style={styles.savingsText}>
+                    Save ₹{calculatedSavings}
+                  </Text>
+                </View>
+              )}
+            </View>
 
-            {/* 4. Quantity Selector with Minus/Plus */}
-            <View style={styles.quantitySection}>
+            {/* 3. Weight / Unit Selector */}
+            <View style={styles.unitSection}>
+              <Text style={styles.sectionHeading}>Choose Pack Size:</Text>
+              <UnitSelector
+                options={unitOptions}
+                selectedUnit={selectedUnit}
+                onSelectUnit={handleUnitSelect}
+              />
+            </View>
+
+            {/* 4. Quantity Stepper Section */}
+            <View style={styles.stepperSection}>
               <View>
-                <Text style={styles.sectionHeading}>Select Quantity</Text>
-                <Text style={styles.quantitySub}>
-                  {isOutOfStock
-                    ? 'Unavailable'
-                    : maxStock <= 5
-                    ? `Only ${maxStock} in stock`
-                    : 'Fresh stock available'}
+                <Text style={styles.sectionHeading}>Quantity:</Text>
+                <Text style={styles.subHeading}>
+                  {inCartQty > 0
+                    ? `Already in cart: ${inCartQty} packs`
+                    : 'Select how many packs you need'}
                 </Text>
               </View>
 
               <View
                 style={[
-                  styles.stepperContainer,
+                  styles.stepperBox,
                   isOutOfStock && styles.stepperDisabled,
                 ]}>
                 <TouchableOpacity
@@ -303,15 +376,14 @@ export const ProductDetailsScreen = ({ navigation, route }) => {
                     styles.stepperBtn,
                     quantity <= 1 && styles.stepperBtnDisabled,
                   ]}
-                  activeOpacity={0.7}
-                  disabled={quantity <= 1 || isOutOfStock}
-                  onPress={handleDecrement}>
+                  onPress={handleDecrement}
+                  disabled={quantity <= 1 || isOutOfStock}>
                   <Text
                     style={[
                       styles.stepperBtnText,
                       quantity <= 1 && styles.stepperTextDisabled,
                     ]}>
-                    −
+                    -
                   </Text>
                 </TouchableOpacity>
 
@@ -322,17 +394,14 @@ export const ProductDetailsScreen = ({ navigation, route }) => {
                 <TouchableOpacity
                   style={[
                     styles.stepperBtn,
-                    (!canIncrement || isOutOfStock) &&
-                      styles.stepperBtnDisabled,
+                    (!canIncrement || isOutOfStock) && styles.stepperBtnDisabled,
                   ]}
-                  activeOpacity={0.7}
-                  disabled={!canIncrement || isOutOfStock}
-                  onPress={handleIncrement}>
+                  onPress={handleIncrement}
+                  disabled={!canIncrement || isOutOfStock}>
                   <Text
                     style={[
                       styles.stepperBtnText,
-                      (!canIncrement || isOutOfStock) &&
-                        styles.stepperTextDisabled,
+                      (!canIncrement || isOutOfStock) && styles.stepperTextDisabled,
                     ]}>
                     +
                   </Text>
@@ -340,130 +409,106 @@ export const ProductDetailsScreen = ({ navigation, route }) => {
               </View>
             </View>
 
-            {/* Max Stock Warning If Applicable */}
-            {!canIncrement && !isOutOfStock && (
+            {/* Max Stock Alert Warning */}
+            {quantity >= maxStock && !isOutOfStock && (
               <View style={styles.maxStockNotice}>
                 <Text style={styles.maxStockNoticeText}>
-                  ⚠️ Maximum available stock reached for this product ({maxStock}{' '}
-                  packs).
+                  ⚠️ Maximum available stock reached for this harvest ({maxStock} packs).
                 </Text>
               </View>
             )}
 
-            {/* Divider */}
-            <View style={styles.divider} />
-
-            {/* 5. Farm-to-Table Assurance Highlights */}
-            <Text style={styles.sectionHeading}>Freshness & Quality</Text>
+            {/* 5. Freshness & Quality Badges */}
             <View style={styles.highlightsGrid}>
               <View style={styles.highlightCard}>
                 <Text style={styles.highlightIcon}>🌱</Text>
-                <Text style={styles.highlightTitle}>100% Organically Grown</Text>
-                <Text style={styles.highlightDesc}>
-                  Pesticide free & soil-tested
-                </Text>
+                <Text style={styles.highlightTitle}>100% Organic</Text>
+                <Text style={styles.highlightDesc}>Chemical & pesticide-free</Text>
               </View>
-              <View style={styles.highlightCard}>
-                <Text style={styles.highlightIcon}>⚡</Text>
-                <Text style={styles.highlightTitle}>30 Min Delivery</Text>
-                <Text style={styles.highlightDesc}>
-                  Temperature packed & sealed
-                </Text>
-              </View>
-              <View style={styles.highlightCard}>
-                <Text style={styles.highlightIcon}>📍</Text>
-                <Text style={styles.highlightTitle}>Farm Origin</Text>
-                <Text style={styles.highlightDesc}>
-                  {product.origin || 'Nashik Organic Valley, Maharashtra'}
-                </Text>
-              </View>
+
               <View style={styles.highlightCard}>
                 <Text style={styles.highlightIcon}>❄️</Text>
-                <Text style={styles.highlightTitle}>Storage Advice</Text>
-                <Text style={styles.highlightDesc}>
-                  {product.shelfLife || 'Best consumed within 3–4 days'}
-                </Text>
+                <Text style={styles.highlightTitle}>Cold-Chain</Text>
+                <Text style={styles.highlightDesc}>Stored at 4°C fresh</Text>
+              </View>
+
+              <View style={styles.highlightCard}>
+                <Text style={styles.highlightIcon}>⏱️</Text>
+                <Text style={styles.highlightTitle}>Shelf Life</Text>
+                <Text style={styles.highlightDesc}>{product.shelfLife || '3–4 days refrigerated'}</Text>
+              </View>
+
+              <View style={styles.highlightCard}>
+                <Text style={styles.highlightIcon}>🧼</Text>
+                <Text style={styles.highlightTitle}>Pre-Washed</Text>
+                <Text style={styles.highlightDesc}>Ozone-cleansed ready to cook</Text>
               </View>
             </View>
 
-            {/* 6. Nutrition Facts Card */}
+            {/* 6. Nutritional Facts */}
             {product.nutrition && (
               <View style={styles.nutritionBox}>
-                <Text style={styles.nutritionTitle}>
-                  Nutritional Value (Per 100g)
-                </Text>
+                <Text style={styles.nutritionTitle}>NUTRITIONAL VALUES (PER 100G)</Text>
                 <View style={styles.nutritionRow}>
                   <View style={styles.nutrientItem}>
-                    <Text style={styles.nutrientVal}>
-                      {product.nutrition.calories || '25 kcal'}
-                    </Text>
-                    <Text style={styles.nutrientLabel}>Energy</Text>
+                    <Text style={styles.nutrientVal}>{product.nutrition.calories || '25 kcal'}</Text>
+                    <Text style={styles.nutrientLabel}>Calories</Text>
                   </View>
                   <View style={styles.nutrientDivider} />
                   <View style={styles.nutrientItem}>
-                    <Text style={styles.nutrientVal}>
-                      {product.nutrition.carbs || '4.2g'}
-                    </Text>
-                    <Text style={styles.nutrientLabel}>Carbs</Text>
-                  </View>
-                  <View style={styles.nutrientDivider} />
-                  <View style={styles.nutrientItem}>
-                    <Text style={styles.nutrientVal}>
-                      {product.nutrition.protein || '1.8g'}
-                    </Text>
+                    <Text style={styles.nutrientVal}>{product.nutrition.protein || '2.2g'}</Text>
                     <Text style={styles.nutrientLabel}>Protein</Text>
                   </View>
                   <View style={styles.nutrientDivider} />
                   <View style={styles.nutrientItem}>
-                    <Text style={styles.nutrientVal}>
-                      {product.nutrition.vitamin ? 'Rich' : 'High'}
-                    </Text>
-                    <Text style={styles.nutrientLabel}>Vitamins</Text>
+                    <Text style={styles.nutrientVal}>{product.nutrition.carbs || '3.5g'}</Text>
+                    <Text style={styles.nutrientLabel}>Carbs</Text>
+                  </View>
+                  <View style={styles.nutrientDivider} />
+                  <View style={styles.nutrientItem}>
+                    <Text style={styles.nutrientVal}>{product.nutrition.vitamin || 'Vit A & C'}</Text>
+                    <Text style={styles.nutrientLabel}>Key Nutrients</Text>
                   </View>
                 </View>
               </View>
             )}
 
-            {/* 7. Product Description */}
+            {/* 7. Description & Storage Tips */}
             <View style={styles.descSection}>
-              <Text style={styles.sectionHeading}>About this Product</Text>
+              <Text style={styles.sectionHeading}>About this Vegetable:</Text>
               <Text
                 style={styles.descriptionText}
                 numberOfLines={descriptionExpanded ? undefined : 3}>
-                {product.description}
-                {' '}
-                Our vegetables are handpicked at peak ripeness at local
-                partner farms and brought directly to cold storage distribution
-                centers within hours of harvest to preserve crunchiness, flavor,
-                and nutrient bioavailability.
+                {product.description ||
+                  'Naturally grown, hand-picked farm vegetables harvested fresh every sunrise.'}
               </Text>
-              <TouchableOpacity
-                onPress={() => setDescriptionExpanded(prev => !prev)}
-                activeOpacity={0.7}
-                style={styles.readMoreBtn}>
-                <Text style={styles.readMoreText}>
-                  {descriptionExpanded ? 'Read Less ▲' : 'Read More ▼'}
-                </Text>
-              </TouchableOpacity>
+              {product.description && product.description.length > 100 && (
+                <TouchableOpacity
+                  onPress={() => setDescriptionExpanded(prev => !prev)}
+                  style={styles.readMoreBtn}>
+                  <Text style={styles.readMoreText}>
+                    {descriptionExpanded ? 'Read Less ▲' : 'Read More ▼'}
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
           </View>
         </ScrollView>
 
-        {/* 8. Bottom Persistent Action Bar */}
+        {/* Floating Bottom Action Bar */}
         <View style={styles.bottomBar}>
           <View style={styles.totalPriceCol}>
-            <Text style={styles.totalPriceLabel}>Total Price</Text>
+            <Text style={styles.totalPriceLabel}>Total Amount</Text>
             <View style={styles.totalPriceRow}>
               <Text style={styles.totalPriceValue}>₹{totalPrice}</Text>
               {calculatedSavings > 0 && (
                 <Text style={styles.totalSavingsTag}>
-                  (Save ₹{calculatedSavings})
+                  Save ₹{calculatedSavings}
                 </Text>
               )}
             </View>
             <Text style={styles.totalItemsLabel}>
-              {quantity} {quantity === 1 ? 'pack' : 'packs'} •{' '}
-              {selectedUnit?.label || product.unit}
+              {quantity} × {selectedUnit ? selectedUnit.label : product.unit}
             </Text>
           </View>
 
@@ -472,16 +517,12 @@ export const ProductDetailsScreen = ({ navigation, route }) => {
               styles.addToCartBtn,
               isOutOfStock && styles.addToCartBtnDisabled,
             ]}
-            activeOpacity={0.85}
-            disabled={isOutOfStock}
-            onPress={handleAddToCart}>
-            <Text style={styles.cartIcon}>🛒</Text>
+            activeOpacity={0.8}
+            onPress={handleAddToCart}
+            disabled={isOutOfStock}>
+            <Text style={styles.cartIcon}>🛍️</Text>
             <Text style={styles.addToCartText}>
-              {isOutOfStock
-                ? 'Out of Stock'
-                : inCartQty > 0
-                ? `Update Cart (${inCartQty})`
-                : 'Add to Cart'}
+              {isOutOfStock ? 'Out of Stock' : 'Add to Basket'}
             </Text>
           </TouchableOpacity>
         </View>
@@ -499,20 +540,31 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
+  centerLoading: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.xl,
+  },
+  loadingText: {
+    marginTop: spacing.md,
+    fontSize: typography.sizes.md,
+    color: colors.textSecondary,
+  },
   topNavBar: {
     position: 'absolute',
-    top: spacing.sm,
+    top: 12,
     left: spacing.md,
     right: spacing.md,
+    zIndex: 10,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    zIndex: 100,
   },
   navCircleBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: 'rgba(255, 255, 255, 0.92)',
     justifyContent: 'center',
     alignItems: 'center',
@@ -522,20 +574,12 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 4,
   },
-  navCircleBtnActive: {
-    backgroundColor: '#FFEBEE',
+  navIcon: {
+    fontSize: 20,
   },
-  navBackArrow: {
-    fontSize: 22,
-    color: colors.textPrimary,
-    fontWeight: typography.weights.bold,
-  },
-  navRightActions: {
+  topNavRight: {
     flexDirection: 'row',
     gap: spacing.sm,
-  },
-  navActionIcon: {
-    fontSize: 18,
   },
   scrollContent: {
     paddingBottom: 110,
@@ -551,14 +595,20 @@ const styles = StyleSheet.create({
   heroEmoji: {
     fontSize: 128,
   },
+  heroImage: {
+    width: '80%',
+    height: '80%',
+    borderRadius: borderRadius.md,
+  },
   heroDiscountBadge: {
     position: 'absolute',
     bottom: spacing.md,
     left: spacing.md,
     backgroundColor: '#FF5722',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: borderRadius.md,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: borderRadius.sm,
+    elevation: 2,
   },
   heroDiscountText: {
     color: colors.textInverse,
@@ -569,15 +619,13 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: spacing.md,
     right: spacing.md,
-    backgroundColor: colors.surface,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: borderRadius.md,
-    borderWidth: 1,
-    borderColor: colors.borderLight,
+    backgroundColor: 'rgba(46, 125, 50, 0.9)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: borderRadius.sm,
   },
   heroTagText: {
-    color: colors.primaryDark,
+    color: colors.textInverse,
     fontSize: typography.sizes.xs,
     fontWeight: typography.weights.bold,
   },
@@ -604,15 +652,15 @@ const styles = StyleSheet.create({
   },
   categoryPillText: {
     color: colors.primaryDark,
-    fontSize: typography.sizes.xs,
+    fontSize: 11,
     fontWeight: typography.weights.bold,
+    textTransform: 'uppercase',
   },
   productName: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: typography.weights.bold,
     color: colors.textPrimary,
-    marginTop: spacing.xs,
-    marginBottom: 4,
+    marginBottom: spacing.xs,
   },
   ratingRow: {
     flexDirection: 'row',
@@ -629,91 +677,101 @@ const styles = StyleSheet.create({
     marginRight: 6,
   },
   starIcon: {
-    color: '#FFB300',
+    color: '#FF8F00',
     fontSize: 12,
     marginRight: 2,
   },
   ratingVal: {
-    fontSize: typography.sizes.xs,
+    fontSize: 12,
     fontWeight: typography.weights.bold,
-    color: '#795548',
+    color: '#FF8F00',
   },
   reviewsText: {
-    fontSize: typography.sizes.xs,
+    fontSize: 12,
     color: colors.textSecondary,
-    marginRight: 6,
   },
-  ratingDivider: {
+  dotSeparator: {
+    marginHorizontal: 6,
     color: colors.textMuted,
-    marginRight: 6,
   },
-  harvestText: {
-    fontSize: typography.sizes.xs,
+  originText: {
+    fontSize: 12,
     color: colors.primaryDark,
-    fontWeight: typography.weights.semiBold,
+    fontWeight: typography.weights.medium,
   },
-  priceSection: {
-    marginVertical: spacing.xs,
+  priceContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: spacing.sm,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: colors.borderLight,
+    marginBottom: spacing.md,
   },
   priceRow: {
     flexDirection: 'row',
     alignItems: 'baseline',
   },
-  sellingPrice: {
+  currencySymbol: {
+    fontSize: 18,
+    fontWeight: typography.weights.bold,
+    color: colors.textPrimary,
+    marginRight: 2,
+  },
+  activePrice: {
     fontSize: 28,
     fontWeight: typography.weights.bold,
-    color: colors.primaryDark,
-    marginRight: spacing.sm,
+    color: colors.textPrimary,
+    marginRight: 8,
   },
-  originalPrice: {
-    fontSize: typography.sizes.md,
+  originalPriceText: {
+    fontSize: 16,
     color: colors.textMuted,
     textDecorationLine: 'line-through',
-    marginRight: spacing.sm,
+    marginRight: 8,
+  },
+  unitPerLabel: {
+    fontSize: 12,
+    color: colors.textSecondary,
   },
   savingsPill: {
     backgroundColor: '#E8F5E9',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: '#C8E6C9',
   },
-  savingsPillText: {
-    color: colors.primaryDark,
+  savingsText: {
+    color: '#2E7D32',
     fontSize: 11,
     fontWeight: typography.weights.bold,
   },
-  priceSub: {
-    fontSize: typography.sizes.xs,
+  unitSection: {
+    marginBottom: spacing.md,
+  },
+  sectionHeading: {
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.bold,
+    color: colors.textPrimary,
+    marginBottom: 6,
+  },
+  subHeading: {
+    fontSize: 11,
     color: colors.textSecondary,
-    marginTop: 3,
   },
-  divider: {
-    height: 1,
-    backgroundColor: colors.borderLight,
-    marginVertical: spacing.md,
-  },
-  quantitySection: {
+  stepperSection: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginVertical: spacing.xs,
+    marginBottom: spacing.sm,
   },
-  sectionHeading: {
-    fontSize: typography.sizes.md,
-    fontWeight: typography.weights.bold,
-    color: colors.textPrimary,
-  },
-  quantitySub: {
-    fontSize: typography.sizes.xs,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-  stepperContainer: {
+  stepperBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.background,
+    borderWidth: 1,
     borderRadius: borderRadius.md,
-    borderWidth: 1.5,
     borderColor: colors.borderLight,
     overflow: 'hidden',
   },

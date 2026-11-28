@@ -1,17 +1,28 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
 import colors from '../../constants/colors';
 import typography from '../../constants/typography';
 import { spacing, borderRadius } from '../../constants/theme';
 
 export const CategoryCard = ({ category, onPress }) => {
+  const [imageError, setImageError] = useState(false);
+
   return (
     <TouchableOpacity
       style={styles.card}
       activeOpacity={0.8}
       onPress={() => onPress && onPress(category)}>
       <View style={[styles.iconCircle, { backgroundColor: category.bgColor }]}>
-        <Text style={styles.icon}>{category.icon}</Text>
+        {category.image && !imageError ? (
+          <Image
+            source={{ uri: category.image }}
+            style={styles.categoryImage}
+            resizeMode="cover"
+            onError={() => setImageError(true)}
+          />
+        ) : (
+          <Text style={styles.icon}>{category.icon || '🥬'}</Text>
+        )}
       </View>
 
       <View style={styles.content}>
@@ -62,6 +73,11 @@ const styles = StyleSheet.create({
   },
   icon: {
     fontSize: 34,
+  },
+  categoryImage: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
   },
   content: {
     flex: 1,

@@ -7,9 +7,23 @@ import React, {
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { INITIAL_NOTIFICATIONS } from '../constants/mockData';
+import {
+  authAPI,
+  cartAPI,
+  addressAPI,
+  orderAPI,
+  deliverySlotAPI,
+  normalizeBackendAddress,
+  normalizeBackendOrder,
+  normalizeDeliverySlot,
+  STORAGE_KEY_AUTH_TOKEN,
+  setOnUnauthorizedCallback,
+  formatApiError,
+} from '../services/api';
 
 export const AppContext = createContext();
 
+export { STORAGE_KEY_AUTH_TOKEN };
 export const STORAGE_KEY_ADDRESSES = '@vegdelivery_addresses';
 export const STORAGE_KEY_SELECTED_ADDRESS_ID = '@vegdelivery_selected_address_id';
 export const STORAGE_KEY_ORDERS = '@vegdelivery_orders';
@@ -26,6 +40,51 @@ export const DEFAULT_USER_PROFILE = {
   avatar: '🥦',
   bio: 'Farm fresh vegetable enthusiast',
   joinDate: 'Member since Nov 2026',
+};
+
+export const formatUserProfile = userData => {
+  if (!userData) return DEFAULT_USER_PROFILE;
+  return {
+    id: userData.id,
+    username: userData.username,
+    name:
+      userData.full_name ||
+      `${userData.first_name || ''} ${userData.last_name || ''}`.trim() ||
+      userData.username ||
+      'User',
+    phone: userData.phone_number || userData.phone || '',
+    email: userData.email || '',
+    role: userData.role || 'customer',
+    avatar: '🥦',
+    bio: userData.bio || 'Farm fresh vegetable enthusiast',
+    joinDate: userData.created_at
+      ? `Member since ${new Date(userData.created_at).toLocaleDateString(
+          'en-US',
+          { month: 'short', year: 'numeric' },
+        )}`
+      : 'Member since Nov 2026',
+    isVerified: Boolean(userData.is_verified),
+  };
+};
+
+export const getEmojiForProduct = name => {
+  if (!name) return '🥦';
+  const lower = name.toLowerCase();
+  if (lower.includes('tomato')) return '🍅';
+  if (lower.includes('onion')) return '🧅';
+  if (lower.includes('potato')) return '🥔';
+  if (lower.includes('carrot')) return '🥕';
+  if (lower.includes('spinach') || lower.includes('palak')) return '🥬';
+  if (lower.includes('broccoli')) return '🥦';
+  if (lower.includes('coriander') || lower.includes('dhaniya')) return '🌿';
+  if (lower.includes('chilli') || lower.includes('chili') || lower.includes('mirch')) return '🌶️';
+  if (lower.includes('ginger') || lower.includes('adrak')) return '🫚';
+  if (lower.includes('garlic') || lower.includes('lahsun')) return '🧄';
+  if (lower.includes('capsicum') || lower.includes('pepper')) return '🫑';
+  if (lower.includes('cucumber') || lower.includes('kheera')) return '🥒';
+  if (lower.includes('corn') || lower.includes('bhutta')) return '🌽';
+  if (lower.includes('lemon') || lower.includes('nimbu')) return '🍋';
+  return '🥦';
 };
 
 export const ORDER_STAGES = [
@@ -354,8 +413,11 @@ export const formatAddressObject = addr => {
 };
 
 export const AppProvider = ({ children }) => {
-  // Cart state: { [productId]: { product, quantity, unit } }
+  // Cart state: { [productId]: { product, quantity, unit, cartItemId, itemSubtotal } }
   const [cart, setCart] = useState({});
+  const [backendCart, setBackendCart] = useState(null);
+  const [isCartLoading, setIsCartLoading] = useState(false);
+  const [isAddressesLoading, setIsAddressesLoading] = useState(false);
   const [isCartHydrated, setIsCartHydrated] = useState(false);
 
   // Global Toast State
@@ -397,9 +459,19 @@ export const AppProvider = ({ children }) => {
 
   // Orders state
   const [orders, setOrders] = useState(DEFAULT_SEED_ORDERS);
+  const [isOrdersLoading, setIsOrdersLoading] = useState(false);
+
+  // Delivery Slots state
+  const [deliverySlots, setDeliverySlots] = useState([]);
+  const [isSlotsLoading, setIsSlotsLoading] = useState(false);
 
   // User profile
   const [user, setUser] = useState(DEFAULT_USER_PROFILE);
+
+  // Authentication & Session State
+  const [authToken, setAuthToken] = useState(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
 
   // Load addresses, selected address, orders & profile from AsyncStorage on app mount
   useEffect(() => {
@@ -521,28 +593,81 @@ export const AppProvider = ({ children }) => {
 
   // Calculate total items in cart
   const cartCount = useMemo(() => {
-    return Object.values(cart).reduce((sum, item) => sum + item.quantity, 0);
+    return Object.values(cart).reduce((sum, item) => sum + (item.quantity || 0), 0);
   }, [cart]);
 
-  // Calculate total price of cart items
+  // Calculate total price of cart items (authoritative backend totals when authenticated)
   const cartSubtotal = useMemo(() => {
+    if (isAuthenticated && backendCart && backendCart.subtotal !== undefined) {
+      return parseFloat(backendCart.subtotal) || 0;
+    }
     return Object.values(cart).reduce(
-      (sum, item) => sum + (item.product.price || 0) * item.quantity,
+      (sum, item) => sum + (item.product?.price || 0) * (item.quantity || 0),
       0,
     );
-  }, [cart]);
+  }, [isAuthenticated, backendCart, cart]);
 
   // Configurable delivery fee and final total
   const deliveryFee = useMemo(() => {
+    if (isAuthenticated && backendCart && backendCart.delivery_charge !== undefined) {
+      return parseFloat(backendCart.delivery_charge) || 0;
+    }
     return cartSubtotal >= FREE_DELIVERY_THRESHOLD || cartSubtotal === 0
       ? 0
       : DEFAULT_DELIVERY_CHARGE;
-  }, [cartSubtotal]);
+  }, [isAuthenticated, backendCart, cartSubtotal]);
 
   const cartTotal = useMemo(() => {
+    if (isAuthenticated && backendCart && backendCart.final_total !== undefined) {
+      const backendFinal = parseFloat(backendCart.final_total) || 0;
+      const couponDiscount = appliedCoupon ? appliedCoupon.discount : 0;
+      return Math.max(0, backendFinal - couponDiscount);
+    }
     const couponDiscount = appliedCoupon ? appliedCoupon.discount : 0;
     return Math.max(0, cartSubtotal + deliveryFee - couponDiscount);
-  }, [cartSubtotal, deliveryFee, appliedCoupon]);
+  }, [isAuthenticated, backendCart, cartSubtotal, deliveryFee, appliedCoupon]);
+
+  // Fetch current user's cart from backend
+  const fetchBackendCart = useCallback(async () => {
+    if (!isAuthenticated) return null;
+    setIsCartLoading(true);
+    try {
+      const res = await cartAPI.getCart();
+      if (res && res.data) {
+        const serverCart = res.data;
+        setBackendCart(serverCart);
+        if (Array.isArray(serverCart.items)) {
+          const syncedCart = {};
+          serverCart.items.forEach(item => {
+            syncedCart[item.product_id] = {
+              cartItemId: item.id,
+              product: {
+                id: item.product_id,
+                name: item.product_name,
+                price: parseFloat(item.product_price),
+                unit: item.unit || '1 kg',
+                image: item.product_image,
+                imageUrl: item.product_image,
+                emoji: getEmojiForProduct(item.product_name),
+                accentColor: '#E8F5E9',
+              },
+              unit: item.unit || '1 kg',
+              quantity: item.quantity,
+              itemSubtotal: parseFloat(item.subtotal),
+            };
+          });
+          setCart(syncedCart);
+        }
+        setIsCartLoading(false);
+        return serverCart;
+      }
+    } catch (err) {
+      console.warn('Failed to fetch backend cart:', err);
+    } finally {
+      setIsCartLoading(false);
+    }
+    return null;
+  }, [isAuthenticated]);
 
   // Add item to cart with quantity, unit and stock validation
   const addToCart = useCallback(
@@ -558,7 +683,8 @@ export const AppProvider = ({ children }) => {
           ? 0
           : 50;
 
-      const existing = cart[product.id];
+      const existingKey = Object.keys(cart).find(k => k == product.id);
+      const existing = existingKey ? cart[existingKey] : null;
       const wasExisting = !!existing;
       const currentQty = existing ? existing.quantity : 0;
       let newQty = currentQty + quantityToAdd;
@@ -575,6 +701,7 @@ export const AppProvider = ({ children }) => {
         if (newQty <= 0) {
           const copy = { ...prev };
           delete copy[product.id];
+          delete copy[String(product.id)];
           return copy;
         }
 
@@ -587,6 +714,7 @@ export const AppProvider = ({ children }) => {
         return {
           ...prev,
           [product.id]: {
+            cartItemId: existing?.cartItemId || null,
             product: {
               ...product,
               price: calculatedPrice,
@@ -606,6 +734,37 @@ export const AppProvider = ({ children }) => {
 
       showToast(message, isExceeded ? 'warning' : 'success');
 
+      // If authenticated, sync with backend
+      const numId = parseInt(product.id, 10);
+      if (isAuthenticated && !isNaN(numId) && numId > 0) {
+        cartAPI
+          .addItem(numId, quantityToAdd)
+          .then(res => {
+            if (res?.data?.cart) {
+              setBackendCart(res.data.cart);
+              if (res.data.item) {
+                setCart(prev => {
+                  const itemEntry =
+                    prev[product.id] || prev[String(product.id)];
+                  if (itemEntry) {
+                    return {
+                      ...prev,
+                      [product.id]: {
+                        ...itemEntry,
+                        cartItemId: res.data.item.id,
+                      },
+                    };
+                  }
+                  return prev;
+                });
+              }
+            }
+          })
+          .catch(err => {
+            console.warn('Backend cart add failed:', err);
+          });
+      }
+
       return {
         success: true,
         exceeded: isExceeded,
@@ -613,53 +772,98 @@ export const AppProvider = ({ children }) => {
         message,
       };
     },
-    [cart, showToast],
+    [cart, showToast, isAuthenticated],
   );
 
   // Update specific item quantity directly
-  const updateCartQuantity = useCallback((productId, quantity) => {
-    if (!productId) return;
-    setCart(prev => {
-      if (quantity <= 0) {
-        const copy = { ...prev };
-        delete copy[productId];
-        return copy;
+  const updateCartQuantity = useCallback(
+    (productId, quantity) => {
+      if (!productId) return;
+      const existingKey = Object.keys(cart).find(k => k == productId);
+      const existing = existingKey ? cart[existingKey] : null;
+
+      setCart(prev => {
+        if (quantity <= 0) {
+          const copy = { ...prev };
+          delete copy[productId];
+          delete copy[String(productId)];
+          return copy;
+        }
+        if (!existing) return prev;
+        return {
+          ...prev,
+          [productId]: {
+            ...existing,
+            quantity,
+          },
+        };
+      });
+
+      if (isAuthenticated && existing?.cartItemId) {
+        if (quantity <= 0) {
+          cartAPI
+            .removeItem(existing.cartItemId)
+            .then(res => {
+              if (res?.data?.cart) setBackendCart(res.data.cart);
+            })
+            .catch(err => console.warn('Backend remove item failed:', err));
+        } else {
+          cartAPI
+            .updateItem(existing.cartItemId, quantity)
+            .then(res => {
+              if (res?.data?.cart) setBackendCart(res.data.cart);
+            })
+            .catch(err => console.warn('Backend update item failed:', err));
+        }
       }
-      const existing = prev[productId];
-      if (!existing) return prev;
-      return {
-        ...prev,
-        [productId]: {
-          ...existing,
-          quantity,
-        },
-      };
-    });
-  }, []);
+    },
+    [cart, isAuthenticated],
+  );
 
   // Decrement item from cart (never decreases below 1)
-  const removeFromCart = useCallback(productId => {
-    if (!productId) return;
-    setCart(prev => {
-      const existing = prev[productId];
-      if (!existing) return prev;
+  const removeFromCart = useCallback(
+    productId => {
+      if (!productId) return;
+      const existingKey = Object.keys(cart).find(k => k == productId);
+      const existing = existingKey ? cart[existingKey] : null;
+      if (!existing) return;
       if (existing.quantity <= 1) {
-        return prev; // Stepper decrement never reduces below 1
+        return; // Stepper decrement never reduces below 1
       }
-      return {
-        ...prev,
-        [productId]: {
-          ...existing,
-          quantity: existing.quantity - 1,
-        },
-      };
-    });
-  }, []);
+      const nextQty = existing.quantity - 1;
+
+      setCart(prev => {
+        return {
+          ...prev,
+          [productId]: {
+            ...existing,
+            quantity: nextQty,
+          },
+        };
+      });
+
+      if (isAuthenticated && existing?.cartItemId) {
+        cartAPI
+          .updateItem(existing.cartItemId, nextQty)
+          .then(res => {
+            if (res?.data?.cart) setBackendCart(res.data.cart);
+          })
+          .catch(err => console.warn('Backend decrement item failed:', err));
+      }
+    },
+    [cart, isAuthenticated],
+  );
 
   // Get current quantity of product in cart
   const getItemQuantity = useCallback(
     productId => {
-      return cart[productId]?.quantity || 0;
+      if (productId === undefined || productId === null) return 0;
+      return (
+        cart[productId]?.quantity ||
+        cart[String(productId)]?.quantity ||
+        cart[Number(productId)]?.quantity ||
+        0
+      );
     },
     [cart],
   );
@@ -667,7 +871,13 @@ export const AppProvider = ({ children }) => {
   // Get full cart item entry
   const getItemCartData = useCallback(
     productId => {
-      return cart[productId] || null;
+      if (productId === undefined || productId === null) return null;
+      return (
+        cart[productId] ||
+        cart[String(productId)] ||
+        cart[Number(productId)] ||
+        null
+      );
     },
     [cart],
   );
@@ -676,28 +886,49 @@ export const AppProvider = ({ children }) => {
   const removeCartItem = useCallback(
     productId => {
       if (!productId) return;
+      const existingKey = Object.keys(cart).find(k => k == productId);
+      const existing = existingKey ? cart[existingKey] : null;
+
       setCart(prev => {
-        const existing = prev[productId];
         const copy = { ...prev };
         delete copy[productId];
+        delete copy[String(productId)];
         if (existing) {
-          showToast(`Removed ${existing.product.name} from cart`, 'info');
+          showToast(`Removed ${existing.product?.name || 'item'} from cart`, 'info');
         }
         return copy;
       });
+
+      if (isAuthenticated && existing?.cartItemId) {
+        cartAPI
+          .removeItem(existing.cartItemId)
+          .then(res => {
+            if (res?.data?.cart) setBackendCart(res.data.cart);
+          })
+          .catch(err => console.warn('Backend delete item failed:', err));
+      }
     },
-    [showToast],
+    [cart, showToast, isAuthenticated],
   );
 
   // Clear all items in cart
   const clearCart = useCallback(() => {
     setCart({});
+    setBackendCart(null);
     setAppliedCoupon(null);
     showToast('Shopping cart cleared', 'info');
     AsyncStorage.removeItem(STORAGE_KEY_CART).catch(err => {
       console.warn('Failed to clear cart storage:', err);
     });
-  }, [showToast]);
+    if (isAuthenticated) {
+      cartAPI
+        .clearCart()
+        .then(res => {
+          if (res?.data?.cart) setBackendCart(res.data.cart);
+        })
+        .catch(err => console.warn('Backend clear cart failed:', err));
+    }
+  }, [showToast, isAuthenticated]);
 
   // Apply discount coupon
   const applyCoupon = useCallback((code, currentSubtotal) => {
@@ -791,9 +1022,74 @@ export const AppProvider = ({ children }) => {
 
   // --- ADDRESS MANAGEMENT METHODS ---
 
+  // Fetch addresses from backend
+  const fetchAddresses = useCallback(async () => {
+    if (!isAuthenticated) return null;
+    setIsAddressesLoading(true);
+    try {
+      const res = await addressAPI.getAll();
+      if (res && res.data && Array.isArray(res.data)) {
+        const normalizedList = res.data.map(normalizeBackendAddress);
+        setAddresses(normalizedList);
+        await AsyncStorage.setItem(
+          STORAGE_KEY_ADDRESSES,
+          JSON.stringify(normalizedList),
+        );
+        const defaultAddr =
+          normalizedList.find(a => a.isDefault) || normalizedList[0] || null;
+        setSelectedAddress(defaultAddr);
+        if (defaultAddr) {
+          await AsyncStorage.setItem(
+            STORAGE_KEY_SELECTED_ADDRESS_ID,
+            String(defaultAddr.id),
+          );
+        }
+        return normalizedList;
+      }
+    } catch (err) {
+      console.warn('Failed to fetch addresses from backend:', err);
+    } finally {
+      setIsAddressesLoading(false);
+    }
+    return null;
+  }, [isAuthenticated]);
+
   // Add new address
   const addAddress = useCallback(
     async newAddressData => {
+      if (isAuthenticated) {
+        try {
+          const res = await addressAPI.create(newAddressData);
+          if (res && res.data) {
+            const formatted = normalizeBackendAddress(res.data);
+            setAddresses(prev => {
+              const adjustedPrev = formatted.isDefault
+                ? prev.map(a => ({ ...a, isDefault: false }))
+                : prev;
+              return [formatted, ...adjustedPrev];
+            });
+            if (formatted.isDefault || !selectedAddress) {
+              setSelectedAddress(formatted);
+              await AsyncStorage.setItem(
+                STORAGE_KEY_SELECTED_ADDRESS_ID,
+                String(formatted.id),
+              );
+            }
+            showToast('Address added successfully', 'success');
+            return { success: true, address: formatted };
+          }
+        } catch (err) {
+          console.warn('Backend addAddress error:', err);
+          const errMsg = formatApiError(err);
+          showToast(
+            typeof errMsg === 'string' ? errMsg : 'Failed to add address',
+            'error',
+          );
+          return { success: false, message: errMsg };
+        }
+      }
+
+      // Guest offline fallback
       const newId = `addr_${Date.now()}`;
       const shouldBeDefault = !!newAddressData.isDefault;
 
@@ -833,12 +1129,51 @@ export const AppProvider = ({ children }) => {
 
       return { success: true, address: formattedNew };
     },
-    [selectedAddress],
+    [isAuthenticated, selectedAddress, showToast],
   );
 
   // Update existing address
   const updateAddress = useCallback(
     async (addressId, updatedData) => {
+      const isBackendId = typeof addressId === 'number' || !isNaN(Number(addressId)) && !String(addressId).startsWith('addr_');
+      if (isAuthenticated && isBackendId) {
+        try {
+          const res = await addressAPI.update(Number(addressId), updatedData);
+          if (res && res.data) {
+            const formatted = normalizeBackendAddress(res.data);
+            setAddresses(prev => {
+              return prev.map(a => {
+                if (a.id === addressId || a.id === Number(addressId)) {
+                  return formatted;
+                }
+                if (formatted.isDefault) {
+                  return { ...a, isDefault: false };
+                }
+                return a;
+              });
+            });
+            if (formatted.isDefault || selectedAddress?.id === addressId) {
+              setSelectedAddress(formatted);
+              await AsyncStorage.setItem(
+                STORAGE_KEY_SELECTED_ADDRESS_ID,
+                String(addressId),
+              );
+            }
+            showToast('Address updated successfully', 'success');
+            return { success: true, address: formatted };
+          }
+        } catch (err) {
+          console.warn('Backend updateAddress error:', err);
+          const errMsg = formatApiError(err);
+          showToast(
+            typeof errMsg === 'string' ? errMsg : 'Failed to update address',
+            'error',
+          );
+          return { success: false, message: errMsg };
+        }
+      }
+
+      // Guest / local fallback
       let formattedUpdated = null;
       let nextList = [];
 
@@ -870,7 +1205,7 @@ export const AppProvider = ({ children }) => {
           setSelectedAddress(formattedUpdated);
           await AsyncStorage.setItem(
             STORAGE_KEY_SELECTED_ADDRESS_ID,
-            addressId,
+            String(addressId),
           );
         }
       } catch (err) {
@@ -879,17 +1214,33 @@ export const AppProvider = ({ children }) => {
 
       return { success: true, address: formattedUpdated };
     },
-    [selectedAddress],
+    [isAuthenticated, selectedAddress, showToast],
   );
 
   // Delete address
   const deleteAddress = useCallback(
     async addressId => {
+      const isBackendId = typeof addressId === 'number' || !isNaN(Number(addressId)) && !String(addressId).startsWith('addr_');
+      if (isAuthenticated && isBackendId) {
+        try {
+          await addressAPI.delete(Number(addressId));
+          showToast('Address deleted successfully', 'info');
+        } catch (err) {
+          console.warn('Backend deleteAddress error:', err);
+          const errMsg = formatApiError(err);
+          showToast(
+            typeof errMsg === 'string' ? errMsg : 'Failed to delete address',
+            'error',
+          );
+          return { success: false, message: errMsg };
+        }
+      }
+
       let nextList = [];
       let nextSelected = null;
 
       setAddresses(prev => {
-        nextList = prev.filter(a => a.id !== addressId);
+        nextList = prev.filter(a => a.id !== addressId && a.id !== Number(addressId));
         return nextList;
       });
 
@@ -899,14 +1250,14 @@ export const AppProvider = ({ children }) => {
           JSON.stringify(nextList),
         );
 
-        if (selectedAddress?.id === addressId) {
+        if (selectedAddress?.id === addressId || selectedAddress?.id === Number(addressId)) {
           nextSelected =
             nextList.find(a => a.isDefault) || nextList[0] || null;
           setSelectedAddress(nextSelected);
           if (nextSelected) {
             await AsyncStorage.setItem(
               STORAGE_KEY_SELECTED_ADDRESS_ID,
-              nextSelected.id,
+              String(nextSelected.id),
             );
           } else {
             await AsyncStorage.removeItem(STORAGE_KEY_SELECTED_ADDRESS_ID);
@@ -918,19 +1269,21 @@ export const AppProvider = ({ children }) => {
 
       return { success: true };
     },
-    [selectedAddress],
+    [isAuthenticated, selectedAddress, showToast],
   );
 
   // Select delivery address
   const selectDeliveryAddress = useCallback(
     async addressId => {
-      const target = addresses.find(a => a.id === addressId);
+      const target = addresses.find(
+        a => a.id === addressId || String(a.id) === String(addressId),
+      );
       if (target) {
         setSelectedAddress(target);
         try {
           await AsyncStorage.setItem(
             STORAGE_KEY_SELECTED_ADDRESS_ID,
-            addressId,
+            String(addressId),
           );
         } catch (err) {
           console.warn('Failed to save selected address ID:', err);
@@ -943,41 +1296,233 @@ export const AppProvider = ({ children }) => {
   );
 
   // Set default address
-  const setDefaultAddress = useCallback(async addressId => {
-    let nextList = [];
-    let targetDefault = null;
+  const setDefaultAddress = useCallback(
+    async addressId => {
+      const isBackendId = typeof addressId === 'number' || !isNaN(Number(addressId)) && !String(addressId).startsWith('addr_');
+      if (isAuthenticated && isBackendId) {
+        try {
+          const res = await addressAPI.setDefault(Number(addressId));
+          if (res && res.data) {
+            const formatted = normalizeBackendAddress(res.data);
+            setAddresses(prev =>
+              prev.map(a =>
+                a.id === addressId || a.id === Number(addressId)
+                  ? formatted
+                  : { ...a, isDefault: false },
+              ),
+            );
+            setSelectedAddress(formatted);
+            await AsyncStorage.setItem(
+              STORAGE_KEY_SELECTED_ADDRESS_ID,
+              String(addressId),
+            );
+            showToast('Default delivery address updated', 'success');
+            return { success: true, address: formatted };
+          }
+        } catch (err) {
+          console.warn('Backend setDefault error:', err);
+          const errMsg = formatApiError(err);
+          showToast(
+            typeof errMsg === 'string'
+              ? errMsg
+              : 'Failed to set default address',
+            'error',
+          );
+          return { success: false, message: errMsg };
+        }
+      }
 
-    setAddresses(prev => {
-      nextList = prev.map(a => {
-        const isTarget = a.id === addressId;
-        const formatted = formatAddressObject({ ...a, isDefault: isTarget });
-        if (isTarget) targetDefault = formatted;
-        return formatted;
+      let nextList = [];
+      let targetDefault = null;
+
+      setAddresses(prev => {
+        nextList = prev.map(a => {
+          const isTarget = a.id === addressId;
+          const formatted = formatAddressObject({ ...a, isDefault: isTarget });
+          if (isTarget) targetDefault = formatted;
+          return formatted;
+        });
+        return nextList;
       });
-      return nextList;
-    });
 
+      try {
+        await AsyncStorage.setItem(
+          STORAGE_KEY_ADDRESSES,
+          JSON.stringify(nextList),
+        );
+        if (targetDefault) {
+          setSelectedAddress(targetDefault);
+          await AsyncStorage.setItem(
+            STORAGE_KEY_SELECTED_ADDRESS_ID,
+            String(addressId),
+          );
+        }
+      } catch (err) {
+        console.warn('Failed to set default address:', err);
+      }
+
+      return { success: true, address: targetDefault };
+    },
+    [isAuthenticated, showToast],
+  );
+
+  // --- DELIVERY SLOTS METHODS ---
+
+  // Fetch delivery slots from backend
+  const fetchDeliverySlots = useCallback(async (dateParam = null) => {
+    setIsSlotsLoading(true);
     try {
-      await AsyncStorage.setItem(
-        STORAGE_KEY_ADDRESSES,
-        JSON.stringify(nextList),
-      );
-      if (targetDefault) {
-        setSelectedAddress(targetDefault);
-        await AsyncStorage.setItem(STORAGE_KEY_SELECTED_ADDRESS_ID, addressId);
+      const params = dateParam ? { date: dateParam } : {};
+      const res = await deliverySlotAPI.getSlots(params);
+      if (res && res.data && Array.isArray(res.data)) {
+        const normalized = res.data.map(normalizeDeliverySlot);
+        setDeliverySlots(normalized);
+        setIsSlotsLoading(false);
+        return normalized;
       }
     } catch (err) {
-      console.warn('Failed to set default address:', err);
+      console.warn('Failed to fetch delivery slots:', err);
+    } finally {
+      setIsSlotsLoading(false);
     }
-
-    return { success: true, address: targetDefault };
+    return [];
   }, []);
 
   // --- ORDER MANAGEMENT METHODS ---
 
+  // Fetch customer orders from backend
+  const fetchOrders = useCallback(
+    async (params = {}) => {
+      if (!isAuthenticated) return orders;
+      setIsOrdersLoading(true);
+      try {
+        const res = await orderAPI.getAll(params);
+        const list = res.data?.results || res.data;
+        if (Array.isArray(list)) {
+          const normalizedList = list.map(normalizeBackendOrder);
+          setOrders(normalizedList);
+          await AsyncStorage.setItem(
+            STORAGE_KEY_ORDERS,
+            JSON.stringify(normalizedList),
+          );
+          setIsOrdersLoading(false);
+          return normalizedList;
+        }
+      } catch (err) {
+        console.warn('Failed to fetch orders from backend:', err);
+      } finally {
+        setIsOrdersLoading(false);
+      }
+      return orders;
+    },
+    [isAuthenticated, orders],
+  );
+
+  // Fetch full order details
+  const fetchOrderDetails = useCallback(
+    async orderNumber => {
+      if (!orderNumber) return null;
+      if (isAuthenticated) {
+        try {
+          const res = await orderAPI.getByOrderNumber(orderNumber);
+          if (res && res.data) {
+            const normalized = normalizeBackendOrder(res.data);
+            setOrders(prev =>
+              prev.map(o =>
+                o.id === orderNumber || o.orderNumber === orderNumber
+                  ? normalized
+                  : o,
+              ),
+            );
+            return normalized;
+          }
+        } catch (err) {
+          console.warn(`Failed to fetch details for order ${orderNumber}:`, err);
+        }
+      }
+      return getOrderById(orderNumber);
+    },
+    [isAuthenticated, getOrderById],
+  );
+
   // Place new order
   const placeOrder = useCallback(
     async orderData => {
+      if (isAuthenticated) {
+        try {
+          let paymentMethodCode = 'COD';
+          const pm = (
+            orderData.payment ||
+            orderData.payment_method ||
+            ''
+          ).toLowerCase();
+          if (pm.includes('upi')) {
+            paymentMethodCode = 'UPI';
+          } else if (
+            pm.includes('card') ||
+            pm.includes('netbanking') ||
+            pm.includes('online')
+          ) {
+            paymentMethodCode = 'online';
+          }
+
+          const targetAddressId =
+            orderData.address_id ||
+            orderData.address?.id ||
+            selectedAddress?.id;
+
+          const payload = {
+            address_id: parseInt(targetAddressId, 10),
+            delivery_slot_id:
+              orderData.delivery_slot_id ||
+              (orderData.deliverySlot?.id
+                ? parseInt(orderData.deliverySlot.id, 10)
+                : null),
+            payment_method: paymentMethodCode,
+            customer_note:
+              orderData.customer_note || orderData.customerNote || '',
+          };
+
+          const res = await orderAPI.checkout(payload);
+          if (res && res.data) {
+            const rawOrder = res.data.order;
+            const normalized = normalizeBackendOrder(rawOrder);
+
+            setOrders(prev => [
+              normalized,
+              ...prev.filter(o => o.id !== normalized.id),
+            ]);
+            await AsyncStorage.setItem(
+              STORAGE_KEY_ORDERS,
+              JSON.stringify([
+                normalized,
+                ...orders.filter(o => o.id !== normalized.id),
+              ]),
+            );
+
+            // Clear cart
+            clearCart();
+
+            showToast(
+              res.data.message || `Order #${normalized.id} placed successfully!`,
+              'success',
+            );
+            return normalized;
+          }
+        } catch (err) {
+          console.warn('Backend placeOrder failed:', err);
+          const errMsg = formatApiError(err);
+          showToast(
+            typeof errMsg === 'string' ? errMsg : 'Failed to place order',
+            'error',
+          );
+          throw new Error(
+            typeof errMsg === 'string' ? errMsg : 'Checkout failed',
+          );
+        }
+      }
+
+      // Guest / offline local simulation fallback
       const orderId =
         orderData.orderId ||
         `FV-${Math.floor(10000 + Math.random() * 90000)}`;
@@ -990,9 +1535,12 @@ export const AppProvider = ({ children }) => {
 
       const newOrder = {
         id: orderId,
+        orderId,
+        orderNumber: orderId,
         date: dateStr,
         createdAt: now.toISOString(),
         status: 'Order Placed',
+        order_status: 'pending',
         stage: 1,
         estimatedDelivery: orderData.slot ? `${orderData.slot}` : '20 - 30 mins',
         slot: orderData.slot || 'Instant Delivery (20-30 mins)',
@@ -1074,32 +1622,77 @@ export const AppProvider = ({ children }) => {
         console.warn('Failed to save placed order:', err);
       }
 
-      // Automatically clear cart upon successful placement
       clearCart();
-
       return newOrder;
     },
-    [selectedAddress, clearCart],
+    [isAuthenticated, selectedAddress, orders, clearCart, showToast],
   );
 
   // Cancel existing order
   const cancelOrder = useCallback(
     async (orderId, reason = 'Cancelled by user') => {
+      const target = orders.find(
+        o =>
+          o.id === orderId ||
+          o.orderNumber === orderId ||
+          o.orderId === orderId,
+      );
+
+      if (
+        isAuthenticated &&
+        (target?.orderNumber ||
+          target?.backendId ||
+          String(orderId).startsWith('FV-'))
+      ) {
+        try {
+          const orderNum = target?.orderNumber || orderId;
+          const res = await orderAPI.cancel(orderNum, { reason });
+          if (res && res.data) {
+            const normalized = normalizeBackendOrder(res.data.order);
+            setOrders(prev =>
+              prev.map(o =>
+                o.id === orderId || o.orderNumber === orderId ? normalized : o,
+              ),
+            );
+            showToast('Order cancelled successfully', 'info');
+            return {
+              success: true,
+              order: normalized,
+              message: res.data.message,
+            };
+          }
+        } catch (err) {
+          console.warn('Backend cancelOrder failed:', err);
+          const errMsg = formatApiError(err);
+          showToast(
+            typeof errMsg === 'string' ? errMsg : 'Failed to cancel order',
+            'error',
+          );
+          return { success: false, message: errMsg };
+        }
+      }
+
+      // Guest / local fallback
       let nextOrders = [];
       let cancelledOrder = null;
       let error = null;
 
       setOrders(prev => {
-        const target = prev.find(o => o.id === orderId);
-        if (!target) {
+        const currentTarget = prev.find(
+          o =>
+            o.id === orderId ||
+            o.orderNumber === orderId ||
+            o.orderId === orderId,
+        );
+        if (!currentTarget) {
           error = 'Order not found';
           return prev;
         }
-        if (target.status === 'Delivered') {
+        if (currentTarget.status === 'Delivered' || currentTarget.isDelivered) {
           error = 'Delivered orders cannot be cancelled';
           return prev;
         }
-        if (target.status === 'Cancelled') {
+        if (currentTarget.status === 'Cancelled' || currentTarget.isCancelled) {
           error = 'Order is already cancelled';
           return prev;
         }
@@ -1111,13 +1704,15 @@ export const AppProvider = ({ children }) => {
         });
 
         cancelledOrder = {
-          ...target,
+          ...currentTarget,
           status: 'Cancelled',
+          order_status: 'cancelled',
           stage: 0,
+          isCancelled: true,
           cancelReason: reason,
           paymentStatus: 'Cancelled',
           timeline: [
-            ...(target.timeline || []).filter(t => t.completed),
+            ...(currentTarget.timeline || []).filter(t => t.completed),
             {
               step: 99,
               title: 'Order Cancelled',
@@ -1149,13 +1744,18 @@ export const AppProvider = ({ children }) => {
 
       return { success: true, order: cancelledOrder };
     },
-    [],
+    [isAuthenticated, orders, showToast],
   );
 
   // Reorder items: add items from past order back to cart
   const reorder = useCallback(
     orderId => {
-      const target = orders.find(o => o.id === orderId);
+      const target = orders.find(
+        o =>
+          o.id === orderId ||
+          o.orderNumber === orderId ||
+          o.orderId === orderId,
+      );
       if (!target || !target.items || target.items.length === 0) {
         return { success: false, message: 'No items found in this order' };
       }
@@ -1189,7 +1789,15 @@ export const AppProvider = ({ children }) => {
   // Get order by ID
   const getOrderById = useCallback(
     orderId => {
-      return orders.find(o => o.id === orderId) || null;
+      return (
+        orders.find(
+          o =>
+            o.id === orderId ||
+            o.orderNumber === orderId ||
+            o.orderId === orderId ||
+            String(o.backendId) === String(orderId),
+        ) || null
+      );
     },
     [orders],
   );
@@ -1217,21 +1825,262 @@ export const AppProvider = ({ children }) => {
     return { success: true, user: nextUser };
   }, []);
 
+  // Session verification against backend
+  const verifySession = useCallback(async () => {
+    setIsAuthLoading(true);
+    try {
+      const token = await AsyncStorage.getItem(STORAGE_KEY_AUTH_TOKEN);
+      if (!token) {
+        setAuthToken(null);
+        setIsAuthenticated(false);
+        setIsAuthLoading(false);
+        return { authenticated: false };
+      }
+
+      // Check token validity with backend
+      try {
+        const res = await authAPI.getProfile();
+        if (res && res.data) {
+          const profile = formatUserProfile(res.data);
+          setUser(profile);
+          setAuthToken(token);
+          setIsAuthenticated(true);
+          await AsyncStorage.setItem(
+            STORAGE_KEY_USER_PROFILE,
+            JSON.stringify(profile),
+          );
+
+          // Fetch authenticated cart, addresses, orders, and delivery slots in background
+          try {
+            const [cartRes, addrRes, orderRes, slotRes] = await Promise.all([
+              cartAPI.getCart(),
+              addressAPI.getAll(),
+              orderAPI.getAll(),
+              deliverySlotAPI.getSlots(),
+            ]);
+            if (cartRes?.data) {
+              const serverCart = cartRes.data;
+              setBackendCart(serverCart);
+              if (Array.isArray(serverCart.items)) {
+                const syncedCart = {};
+                serverCart.items.forEach(item => {
+                  syncedCart[item.product_id] = {
+                    cartItemId: item.id,
+                    product: {
+                      id: item.product_id,
+                      name: item.product_name,
+                      price: parseFloat(item.product_price),
+                      unit: item.unit || '1 kg',
+                      image: item.product_image,
+                      imageUrl: item.product_image,
+                      emoji: getEmojiForProduct(item.product_name),
+                      accentColor: '#E8F5E9',
+                    },
+                    unit: item.unit || '1 kg',
+                    quantity: item.quantity,
+                    itemSubtotal: parseFloat(item.subtotal),
+                  };
+                });
+                setCart(syncedCart);
+              }
+            }
+            if (addrRes?.data && Array.isArray(addrRes.data)) {
+              const normalized = addrRes.data.map(normalizeBackendAddress);
+              setAddresses(normalized);
+              const def =
+                normalized.find(a => a.isDefault) || normalized[0] || null;
+              setSelectedAddress(def);
+            }
+            if (orderRes?.data) {
+              const orderList = orderRes.data?.results || orderRes.data;
+              if (Array.isArray(orderList) && orderList.length > 0) {
+                setOrders(orderList.map(normalizeBackendOrder));
+              }
+            }
+            if (slotRes?.data && Array.isArray(slotRes.data)) {
+              setDeliverySlots(slotRes.data.map(normalizeDeliverySlot));
+            }
+          } catch (loadErr) {
+            console.warn('Initial data load warning in verifySession:', loadErr);
+          }
+
+          setIsAuthLoading(false);
+          return { authenticated: true, user: profile };
+        }
+      } catch (err) {
+        if (
+          err.response &&
+          (err.response.status === 401 || err.response.status === 403)
+        ) {
+          // Token is invalid/expired
+          await AsyncStorage.removeItem(STORAGE_KEY_AUTH_TOKEN);
+          setAuthToken(null);
+          setIsAuthenticated(false);
+          setUser(DEFAULT_USER_PROFILE);
+          setIsAuthLoading(false);
+          return { authenticated: false };
+        }
+
+        // Offline / Network Resilience: load cached user profile if present
+        const cachedUserJson = await AsyncStorage.getItem(
+          STORAGE_KEY_USER_PROFILE,
+        );
+        if (cachedUserJson) {
+          const cachedUser = JSON.parse(cachedUserJson);
+          setUser(cachedUser);
+          setAuthToken(token);
+          setIsAuthenticated(true);
+          setIsAuthLoading(false);
+          return { authenticated: true, user: cachedUser, offline: true };
+        }
+      }
+    } catch (e) {
+      console.warn('Session verification error:', e);
+    }
+    setAuthToken(null);
+    setIsAuthenticated(false);
+    setIsAuthLoading(false);
+    return { authenticated: false };
+  }, []);
+
+  // Login user session
+  const loginUser = useCallback(
+    async (userData, token) => {
+      try {
+        if (token) {
+          await AsyncStorage.setItem(STORAGE_KEY_AUTH_TOKEN, token);
+          setAuthToken(token);
+        }
+        if (userData) {
+          const profile = formatUserProfile(userData);
+          setUser(profile);
+          setIsAuthenticated(true);
+          await AsyncStorage.setItem(
+            STORAGE_KEY_USER_PROFILE,
+            JSON.stringify(profile),
+          );
+
+          // Guest cart sync: upload any pending guest cart items to backend
+          const guestItems = Object.values(cart);
+          if (guestItems.length > 0) {
+            for (const item of guestItems) {
+              const numId = parseInt(item.product?.id, 10);
+              if (!isNaN(numId) && numId > 0 && item.quantity > 0) {
+                try {
+                  await cartAPI.addItem(numId, item.quantity);
+                } catch (syncErr) {
+                  console.warn('Guest cart item sync warning:', syncErr);
+                }
+              }
+            }
+          }
+
+          // Fetch live user cart, addresses, orders, and delivery slots
+          try {
+            const [cartRes, addrRes, orderRes, slotRes] = await Promise.all([
+              cartAPI.getCart(),
+              addressAPI.getAll(),
+              orderAPI.getAll(),
+              deliverySlotAPI.getSlots(),
+            ]);
+            if (cartRes?.data) {
+              const serverCart = cartRes.data;
+              setBackendCart(serverCart);
+              if (Array.isArray(serverCart.items)) {
+                const syncedCart = {};
+                serverCart.items.forEach(item => {
+                  syncedCart[item.product_id] = {
+                    cartItemId: item.id,
+                    product: {
+                      id: item.product_id,
+                      name: item.product_name,
+                      price: parseFloat(item.product_price),
+                      unit: item.unit || '1 kg',
+                      image: item.product_image,
+                      imageUrl: item.product_image,
+                      emoji: getEmojiForProduct(item.product_name),
+                      accentColor: '#E8F5E9',
+                    },
+                    unit: item.unit || '1 kg',
+                    quantity: item.quantity,
+                    itemSubtotal: parseFloat(item.subtotal),
+                  };
+                });
+                setCart(syncedCart);
+              }
+            }
+            if (addrRes?.data && Array.isArray(addrRes.data)) {
+              const normalized = addrRes.data.map(normalizeBackendAddress);
+              setAddresses(normalized);
+              const def =
+                normalized.find(a => a.isDefault) || normalized[0] || null;
+              setSelectedAddress(def);
+            }
+            if (orderRes?.data) {
+              const orderList = orderRes.data?.results || orderRes.data;
+              if (Array.isArray(orderList) && orderList.length > 0) {
+                setOrders(orderList.map(normalizeBackendOrder));
+              }
+            }
+            if (slotRes?.data && Array.isArray(slotRes.data)) {
+              setDeliverySlots(slotRes.data.map(normalizeDeliverySlot));
+            }
+          } catch (fetchErr) {
+            console.warn(
+              'Failed to load server data on login:',
+              fetchErr,
+            );
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to save login session:', err);
+      }
+    },
+    [cart],
+  );
+
   // Logout user
   const logoutUser = useCallback(async () => {
     try {
-      await AsyncStorage.removeItem(STORAGE_KEY_USER_PROFILE);
+      await authAPI.logout();
     } catch (err) {
-      console.warn('Failed to clear session:', err);
+      // Ignore network errors during logout; sensitive local data must be purged
     }
+    try {
+      await AsyncStorage.removeItem(STORAGE_KEY_AUTH_TOKEN);
+      await AsyncStorage.removeItem(STORAGE_KEY_USER_PROFILE);
+      await AsyncStorage.removeItem(STORAGE_KEY_CART);
+    } catch (err) {
+      console.warn('Failed to clear session storage:', err);
+    }
+    setAuthToken(null);
+    setIsAuthenticated(false);
     setUser(DEFAULT_USER_PROFILE);
+    setBackendCart(null);
+    setCart({});
+    setAddresses(DEFAULT_SEED_ADDRESSES.map(formatAddressObject));
+    setSelectedAddress(formatAddressObject(DEFAULT_SEED_ADDRESSES[0]));
+    setOrders(DEFAULT_SEED_ORDERS);
+    setDeliverySlots([]);
     return { success: true };
+  }, []);
+
+  // Register unauthorized response interceptor
+  useEffect(() => {
+    setOnUnauthorizedCallback(() => {
+      setAuthToken(null);
+      setIsAuthenticated(false);
+      setUser(DEFAULT_USER_PROFILE);
+    });
   }, []);
 
   const value = useMemo(
     () => ({
       // Cart
       cart,
+      backendCart,
+      isCartLoading,
+      fetchBackendCart,
       cartCount,
       cartSubtotal,
       deliveryFee,
@@ -1264,14 +2113,24 @@ export const AppProvider = ({ children }) => {
       setAddresses,
       selectedAddress,
       setSelectedAddress,
+      isAddressesLoading,
+      fetchAddresses,
       addAddress,
       updateAddress,
       deleteAddress,
       selectDeliveryAddress,
       setDefaultAddress,
 
+      // Delivery Slots
+      deliverySlots,
+      isSlotsLoading,
+      fetchDeliverySlots,
+
       // Orders
       orders,
+      isOrdersLoading,
+      fetchOrders,
+      fetchOrderDetails,
       placeOrder,
       cancelOrder,
       reorder,
@@ -1282,14 +2141,22 @@ export const AppProvider = ({ children }) => {
       unreadNotifCount,
       markAllNotificationsRead,
 
-      // User
+      // User & Authentication
       user,
       setUser,
+      authToken,
+      isAuthenticated,
+      isAuthLoading,
+      verifySession,
+      loginUser,
       updateUserProfile,
       logoutUser,
     }),
     [
       cart,
+      backendCart,
+      isCartLoading,
+      fetchBackendCart,
       cartCount,
       cartSubtotal,
       deliveryFee,
@@ -1312,12 +2179,20 @@ export const AppProvider = ({ children }) => {
       isFavorite,
       addresses,
       selectedAddress,
+      isAddressesLoading,
+      fetchAddresses,
       addAddress,
       updateAddress,
       deleteAddress,
       selectDeliveryAddress,
       setDefaultAddress,
+      deliverySlots,
+      isSlotsLoading,
+      fetchDeliverySlots,
       orders,
+      isOrdersLoading,
+      fetchOrders,
+      fetchOrderDetails,
       placeOrder,
       cancelOrder,
       reorder,
@@ -1326,6 +2201,11 @@ export const AppProvider = ({ children }) => {
       unreadNotifCount,
       markAllNotificationsRead,
       user,
+      authToken,
+      isAuthenticated,
+      isAuthLoading,
+      verifySession,
+      loginUser,
       updateUserProfile,
       logoutUser,
     ],

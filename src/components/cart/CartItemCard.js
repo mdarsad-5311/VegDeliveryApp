@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
 import colors from '../../constants/colors';
 import typography from '../../constants/typography';
 import { spacing, borderRadius } from '../../constants/theme';
@@ -11,6 +11,7 @@ export const CartItemCard = ({
   onRemove,
   onPressItem,
 }) => {
+  const [imageError, setImageError] = useState(false);
   const { product, quantity, unit } = item;
   const unitPrice = product.price || 0;
   const itemSubtotal = unitPrice * quantity;
@@ -22,6 +23,7 @@ export const CartItemCard = ({
       : 50;
   const isMaxStock = quantity >= maxStock;
   const displayUnit = unit || product.unit || '1 kg';
+  const imageUrl = product.image || product.imageUrl;
 
   return (
     <View style={styles.card}>
@@ -34,7 +36,16 @@ export const CartItemCard = ({
           ]}
           activeOpacity={0.8}
           onPress={() => onPressItem && onPressItem(product)}>
-          <Text style={styles.emoji}>{product.emoji}</Text>
+          {imageUrl && !imageError ? (
+            <Image
+              source={{ uri: imageUrl }}
+              style={styles.productImage}
+              resizeMode="contain"
+              onError={() => setImageError(true)}
+            />
+          ) : (
+            <Text style={styles.emoji}>{product.emoji || '🥦'}</Text>
+          )}
         </TouchableOpacity>
 
         {/* Details Column */}
@@ -160,6 +171,11 @@ const styles = StyleSheet.create({
   },
   emoji: {
     fontSize: 34,
+  },
+  productImage: {
+    width: 48,
+    height: 48,
+    borderRadius: borderRadius.sm,
   },
   detailsCol: {
     flex: 1,

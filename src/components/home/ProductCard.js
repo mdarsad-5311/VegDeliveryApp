@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
 import colors from '../../constants/colors';
 import typography from '../../constants/typography';
 import { spacing, borderRadius } from '../../constants/theme';
@@ -17,6 +17,8 @@ export const ProductCard = ({
     isFavorite,
     toggleFavorite,
   } = useAppContext();
+
+  const [imageError, setImageError] = useState(false);
 
   const quantity = getItemQuantity(product.id);
   const favorited = isFavorite(product.id);
@@ -57,7 +59,7 @@ export const ProductCard = ({
           </TouchableOpacity>
         </View>
 
-        {/* Visual / Emoji */}
+        {/* Visual / Image */}
         <TouchableOpacity
           style={[
             styles.visualContainer,
@@ -65,7 +67,16 @@ export const ProductCard = ({
           ]}
           activeOpacity={0.8}
           onPress={() => onPress && onPress(product)}>
-          <Text style={styles.compactEmoji}>{product.emoji}</Text>
+          {product.image && !imageError ? (
+            <Image
+              source={{ uri: product.image }}
+              style={styles.compactImage}
+              resizeMode="contain"
+              onError={() => setImageError(true)}
+            />
+          ) : (
+            <Text style={styles.compactEmoji}>{product.emoji || '🥬'}</Text>
+          )}
         </TouchableOpacity>
 
         {/* Details */}
@@ -143,7 +154,16 @@ export const ProductCard = ({
           ]}
           activeOpacity={0.8}
           onPress={() => onPress && onPress(product)}>
-          <Text style={styles.featuredEmoji}>{product.emoji}</Text>
+          {product.image && !imageError ? (
+            <Image
+              source={{ uri: product.image }}
+              style={styles.featuredImage}
+              resizeMode="contain"
+              onError={() => setImageError(true)}
+            />
+          ) : (
+            <Text style={styles.featuredEmoji}>{product.emoji || '🥬'}</Text>
+          )}
         </TouchableOpacity>
 
         {/* Content */}
@@ -227,7 +247,16 @@ export const ProductCard = ({
         ]}
         activeOpacity={0.8}
         onPress={() => onPress && onPress(product)}>
-        <Text style={styles.gridEmoji}>{product.emoji}</Text>
+        {product.image && !imageError ? (
+          <Image
+            source={{ uri: product.image }}
+            style={styles.gridImage}
+            resizeMode="contain"
+            onError={() => setImageError(true)}
+          />
+        ) : (
+          <Text style={styles.gridEmoji}>{product.emoji || '🥬'}</Text>
+        )}
       </TouchableOpacity>
 
       {/* Name & Unit */}
@@ -617,6 +646,21 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: typography.weights.bold,
     paddingHorizontal: 4,
+  },
+  compactImage: {
+    width: '85%',
+    height: '85%',
+    borderRadius: borderRadius.sm,
+  },
+  featuredImage: {
+    width: '85%',
+    height: '85%',
+    borderRadius: borderRadius.sm,
+  },
+  gridImage: {
+    width: '85%',
+    height: '85%',
+    borderRadius: borderRadius.sm,
   },
 });
 

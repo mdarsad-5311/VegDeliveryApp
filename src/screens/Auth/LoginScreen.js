@@ -19,8 +19,11 @@ import CustomCheckbox from '../../components/common/CustomCheckbox';
 import colors from '../../constants/colors';
 import typography from '../../constants/typography';
 import { spacing } from '../../constants/theme';
+import useAppContext from '../../hooks/useAppContext';
+import { authAPI, formatApiError } from '../../services';
 
 export const LoginScreen = ({ navigation }) => {
+  const { loginUser } = useAppContext();
   const [mobileNumber, setMobileNumber] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
@@ -47,15 +50,54 @@ export const LoginScreen = ({ navigation }) => {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleLogin = () => {
-    if (!validate()) return;
+  const handleLogin = async () => {
+    if (!validate() || isLoading) return;
 
     setIsLoading(true);
-    // Simulate authentication delay for UI demo
-    setTimeout(() => {
+    setErrors({});
+
+    try {
+      const cleanMobile = mobileNumber.replace(/\D/g, '');
+      const response = await authAPI.login({
+        identifier: cleanMobile,
+        password: password,
+      });
+
+      if (response && response.data) {
+        const { token, user } = response.data;
+        if (token && user) {
+          await loginUser(user, token);
+        }
+        setIsLoading(false);
+        navigation.replace('MainTabs');
+      }
+    } catch (err) {
       setIsLoading(false);
-      navigation.replace('MainTabs');
-    }, 1000);
+      const apiErrors = {};
+      if (err.response && err.response.data) {
+        const data = err.response.data;
+        if (data.identifier) {
+          apiErrors.mobileNumber = Array.isArray(data.identifier)
+            ? data.identifier[0]
+            : data.identifier;
+        }
+        if (data.password) {
+          apiErrors.password = Array.isArray(data.password)
+            ? data.password[0]
+            : data.password;
+        }
+        if (data.non_field_errors) {
+          apiErrors.general = Array.isArray(data.non_field_errors)
+            ? data.non_field_errors[0]
+            : data.non_field_errors;
+        } else if (data.detail) {
+          apiErrors.general = data.detail;
+        }
+      } else {
+        apiErrors.general = formatApiError(err);
+      }
+      setErrors(apiErrors);
+    }
   };
 
   const handleDemoFill = () => {
@@ -92,6 +134,13 @@ export const LoginScreen = ({ navigation }) => {
 
           {/* Form */}
           <View style={styles.form}>
+            {/* General Error Banner */}
+            {Boolean(errors.general) && (
+              <View style={styles.generalErrorBanner}>
+                <Text style={styles.generalErrorText}>{errors.general}</Text>
+              </View>
+            )}
+
             {/* Mobile Number Input */}
             <CustomTextInput
               label="Mobile Number"
@@ -213,6 +262,20 @@ const styles = StyleSheet.create({
   },
   form: {
     marginVertical: spacing.sm,
+  },
+  generalErrorBanner: {
+    backgroundColor: '#FFEBEE',
+    borderWidth: 1,
+    borderColor: '#FFCDD2',
+    borderRadius: 8,
+    padding: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  generalErrorText: {
+    color: colors.error,
+    fontSize: typography.sizes.xs + 1,
+    fontWeight: typography.weights.medium,
+    textAlign: 'center',
   },
   optionsRow: {
     flexDirection: 'row',

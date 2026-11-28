@@ -70,10 +70,10 @@ export const ProfileScreen = ({ navigation }) => {
     setLogoutModalVisible(false);
     await logoutUser();
 
-    // Reset navigation stack directly to Login, preventing back navigation into authenticated screens
+    // Reset navigation stack directly to Welcome flow, preventing back navigation into authenticated screens
     navigation.reset({
       index: 0,
-      routes: [{ name: 'Login' }],
+      routes: [{ name: 'Welcome' }],
     });
   };
 

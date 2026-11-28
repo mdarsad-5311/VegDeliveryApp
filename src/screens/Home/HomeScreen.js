@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,8 @@ import {
   ScrollView,
   TouchableOpacity,
   StatusBar,
+  ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import colors from '../../constants/colors';
@@ -28,12 +30,35 @@ import {
   BEST_SELLING_PRODUCTS,
   RECOMMENDED_PRODUCTS,
 } from '../../constants/mockData';
+import {
+  categoryAPI,
+  productAPI,
+  normalizeCategory,
+  normalizeProduct,
+  formatApiError,
+} from '../../services';
 
 export const HomeScreen = ({ navigation }) => {
   const { cartCount, cartSubtotal } = useAppContext();
 
-  // Search & Filter state
+  // Catalog State
+  const [categories, setCategories] = useState(VEG_CATEGORIES);
+  const [popularProducts, setPopularProducts] = useState(POPULAR_VEGETABLES);
+  const [bestSellingProducts, setBestSellingProducts] = useState(BEST_SELLING_PRODUCTS);
+  const [recommendedProducts, setRecommendedProducts] = useState(RECOMMENDED_PRODUCTS);
+
+  // Loading & Error States
+  const [isLoading, setIsLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [apiError, setApiError] = useState(null);
+
+  // Search State & Race Condition Protection
   const [searchQuery, setSearchQuery] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
+  const [backendSearchResults, setBackendSearchResults] = useState(null);
+  const searchReqIdRef = useRef(0);
+
+  // Filter state
   const [selectedCategory, setSelectedCategory] = useState(null);
 
   // Modals state
@@ -41,27 +66,149 @@ export const HomeScreen = ({ navigation }) => {
   const [notificationsModalVisible, setNotificationsModalVisible] =
     useState(false);
 
-  // Combine all products for searching
-  const allProducts = useMemo(() => {
-    return [
-      ...POPULAR_VEGETABLES,
-      ...BEST_SELLING_PRODUCTS,
-      ...RECOMMENDED_PRODUCTS,
-    ];
+  // Fetch catalog data from backend API
+  const fetchCatalogData = useCallback(async (isPullRefresh = false) => {
+    if (isPullRefresh) {
+      setRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
+    setApiError(null);
+
+    try {
+      const [catRes, popRes, bestRes, recRes] = await Promise.allSettled([
+        categoryAPI.getAll(),
+        productAPI.getAll({ page_size: 10, ordering: '-created_at' }),
+        productAPI.getFeatured({ page_size: 10 }),
+        productAPI.getAll({ page_size: 20 }),
+      ]);
+
+      if (catRes.status === 'fulfilled' && catRes.value?.data) {
+        const rawCats = Array.isArray(catRes.value.data)
+          ? catRes.value.data
+          : catRes.value.data.results || [];
+        if (rawCats.length > 0) {
+          setCategories(rawCats.map(normalizeCategory));
+        }
+      }
+
+      if (popRes.status === 'fulfilled' && popRes.value?.data) {
+        const rawPop = Array.isArray(popRes.value.data)
+          ? popRes.value.data
+          : popRes.value.data.results || [];
+        if (rawPop.length > 0) {
+          setPopularProducts(rawPop.map(normalizeProduct));
+        }
+      }
+
+      if (bestRes.status === 'fulfilled' && bestRes.value?.data) {
+        const rawBest = Array.isArray(bestRes.value.data)
+          ? bestRes.value.data
+          : bestRes.value.data.results || [];
+        if (rawBest.length > 0) {
+          setBestSellingProducts(rawBest.map(normalizeProduct));
+        }
+      }
+
+      if (recRes.status === 'fulfilled' && recRes.value?.data) {
+        const rawRec = Array.isArray(recRes.value.data)
+          ? recRes.value.data
+          : recRes.value.data.results || [];
+        if (rawRec.length > 0) {
+          setRecommendedProducts(rawRec.map(normalizeProduct));
+        }
+      }
+    } catch (err) {
+      setApiError(formatApiError(err));
+    } finally {
+      setIsLoading(false);
+      setRefreshing(false);
+    }
   }, []);
 
-  // Filtered search results
+  useEffect(() => {
+    fetchCatalogData();
+  }, [fetchCatalogData]);
+
+  // Combine all active products for local search fallback, deduplicated by product id
+  const allProducts = useMemo(() => {
+    const map = new Map();
+    [...popularProducts, ...bestSellingProducts, ...recommendedProducts].forEach(
+      item => {
+        if (item && item.id != null && !map.has(item.id)) {
+          map.set(item.id, item);
+        }
+      },
+    );
+    return Array.from(map.values());
+  }, [popularProducts, bestSellingProducts, recommendedProducts]);
+
+  // Backend search with debouncing & race-condition protection
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setBackendSearchResults(null);
+      setIsSearching(false);
+      return;
+    }
+
+    const currentReqId = ++searchReqIdRef.current;
+    setIsSearching(true);
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await productAPI.search(searchQuery.trim());
+        if (currentReqId === searchReqIdRef.current) {
+          const raw = Array.isArray(res.data)
+            ? res.data
+            : res.data.results || [];
+          setBackendSearchResults(raw.map(normalizeProduct));
+          setIsSearching(false);
+        }
+      } catch (err) {
+        if (currentReqId === searchReqIdRef.current) {
+          // Fallback to local search if backend is unreachable
+          const q = searchQuery.toLowerCase().trim();
+          const fallback = allProducts.filter(
+            item =>
+              item.name.toLowerCase().includes(q) ||
+              (item.category && item.category.toLowerCase().includes(q)) ||
+              (item.tag && item.tag.toLowerCase().includes(q)) ||
+              (item.description && item.description.toLowerCase().includes(q)),
+          );
+          setBackendSearchResults(fallback);
+          setIsSearching(false);
+        }
+      }
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery, allProducts]);
+
+  // Filtered search results, strictly deduplicated by product id
   const searchResults = useMemo(() => {
     if (!searchQuery.trim()) return [];
-    const q = searchQuery.toLowerCase().trim();
-    return allProducts.filter(
-      item =>
-        item.name.toLowerCase().includes(q) ||
-        item.category.toLowerCase().includes(q) ||
-        (item.tag && item.tag.toLowerCase().includes(q)) ||
-        (item.description && item.description.toLowerCase().includes(q)),
-    );
-  }, [searchQuery, allProducts]);
+    const sourceList =
+      backendSearchResults !== null
+        ? backendSearchResults
+        : (() => {
+            const q = searchQuery.toLowerCase().trim();
+            return allProducts.filter(
+              item =>
+                (item.name && item.name.toLowerCase().includes(q)) ||
+                (item.category && item.category.toLowerCase().includes(q)) ||
+                (item.tag && item.tag.toLowerCase().includes(q)) ||
+                (item.description && item.description.toLowerCase().includes(q)),
+            );
+          })();
+
+    const seenIds = new Set();
+    return sourceList.filter(item => {
+      if (!item || item.id == null) return false;
+      if (seenIds.has(item.id)) return false;
+      seenIds.add(item.id);
+      return true;
+    });
+  }, [searchQuery, backendSearchResults, allProducts]);
 
   // Handle Category Click -> Navigates to Category screen with category selected
   const handleCategoryPress = category => {
@@ -70,13 +217,15 @@ export const HomeScreen = ({ navigation }) => {
 
   // Filter products by selected category if active
   const displayedRecommended = useMemo(() => {
-    if (!selectedCategory) return RECOMMENDED_PRODUCTS;
+    if (!selectedCategory) return recommendedProducts;
     const catName = selectedCategory.name.toLowerCase();
-    const filtered = RECOMMENDED_PRODUCTS.filter(p =>
-      p.category.toLowerCase().includes(catName),
+    const filtered = recommendedProducts.filter(
+      p =>
+        (p.category && p.category.toLowerCase().includes(catName)) ||
+        p.categoryId === selectedCategory.id,
     );
-    return filtered.length > 0 ? filtered : RECOMMENDED_PRODUCTS;
-  }, [selectedCategory]);
+    return filtered.length > 0 ? filtered : recommendedProducts;
+  }, [selectedCategory, recommendedProducts]);
 
   const handleBannerPress = banner => {
     navigation.navigate('ProductListing', {
@@ -120,7 +269,7 @@ export const HomeScreen = ({ navigation }) => {
   };
 
   const handleProductPress = product => {
-    navigation.navigate('ProductDetails', { product });
+    navigation.navigate('ProductDetails', { product, productId: product.id });
   };
 
   return (
@@ -140,23 +289,55 @@ export const HomeScreen = ({ navigation }) => {
           onClear={() => setSearchQuery('')}
         />
 
+        {/* API Error Notification Banner (if any) */}
+        {apiError ? (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorText}>
+              Unable to sync live catalog with backend. Showing cached items.
+            </Text>
+            <TouchableOpacity
+              style={styles.retryButton}
+              onPress={() => fetchCatalogData()}>
+              <Text style={styles.retryText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
         <ScrollView
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.scrollContent}>
+          contentContainerStyle={styles.scrollContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => fetchCatalogData(true)}
+              colors={[colors.primary]}
+              tintColor={colors.primary}
+            />
+          }>
           {/* SEARCH ACTIVE VIEW */}
           {searchQuery.trim().length > 0 ? (
             <View style={styles.searchResultsContainer}>
               <View style={styles.searchHeader}>
                 <Text style={styles.searchCountText}>
-                  Found {searchResults.length} result
-                  {searchResults.length === 1 ? '' : 's'} for "{searchQuery}"
+                  {isSearching
+                    ? `Searching for "${searchQuery}"...`
+                    : `Found ${searchResults.length} result${
+                        searchResults.length === 1 ? '' : 's'
+                      } for "${searchQuery}"`}
                 </Text>
                 <TouchableOpacity onPress={() => setSearchQuery('')}>
                   <Text style={styles.clearSearchText}>Clear</Text>
                 </TouchableOpacity>
               </View>
 
-              {searchResults.length === 0 ? (
+              {isSearching ? (
+                <View style={styles.searchLoadingContainer}>
+                  <ActivityIndicator size="small" color={colors.primary} />
+                  <Text style={styles.searchLoadingText}>
+                    Searching live vegetables catalog...
+                  </Text>
+                </View>
+              ) : searchResults.length === 0 ? (
                 <View style={styles.emptySearch}>
                   <Text style={styles.emptyEmoji}>🥬🔍</Text>
                   <Text style={styles.emptyTitle}>No Vegetables Found</Text>
@@ -169,7 +350,7 @@ export const HomeScreen = ({ navigation }) => {
                 <View style={styles.gridContainer}>
                   {searchResults.map(item => (
                     <ProductCard
-                      key={item.id}
+                      key={`search-prod-${item.id}`}
                       product={item}
                       variant="grid"
                       onPress={handleProductPress}
@@ -195,7 +376,7 @@ export const HomeScreen = ({ navigation }) => {
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.categoriesScroll}>
-                {VEG_CATEGORIES.map(category => (
+                {categories.map(category => (
                   <CategoryItem
                     key={category.id}
                     category={category}
@@ -228,7 +409,7 @@ export const HomeScreen = ({ navigation }) => {
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.horizontalProductsScroll}>
-                {POPULAR_VEGETABLES.map(product => (
+                {popularProducts.map(product => (
                   <ProductCard
                     key={product.id}
                     product={product}
@@ -249,7 +430,7 @@ export const HomeScreen = ({ navigation }) => {
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.horizontalProductsScroll}>
-                {BEST_SELLING_PRODUCTS.map(product => (
+                {bestSellingProducts.map(product => (
                   <ProductCard
                     key={product.id}
                     product={product}
@@ -331,7 +512,6 @@ export const HomeScreen = ({ navigation }) => {
         <LocationModal
           visible={locationModalVisible}
           onClose={() => setLocationModalVisible(false)}
-          onAddNewAddress={() => navigation.navigate('AddressList')}
         />
 
         {/* Notifications Modal */}
@@ -354,22 +534,39 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
   scrollContent: {
-    paddingBottom: 90, // Space for bottom tab bar and floating cart
+    paddingBottom: 90,
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFF3E0',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderBottomWidth: 1,
+    borderBottomColor: '#FFE0B2',
+  },
+  errorText: {
+    flex: 1,
+    fontSize: 11,
+    color: '#E65100',
+    marginRight: spacing.sm,
+  },
+  retryButton: {
+    backgroundColor: '#E65100',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: borderRadius.sm,
+  },
+  retryText: {
+    color: '#FFF',
+    fontSize: 10,
+    fontWeight: typography.weights.bold,
   },
   categoriesScroll: {
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-  },
-  horizontalProductsScroll: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-  },
-  gridContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.md,
-    marginTop: spacing.xs,
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.sm,
   },
   activeFilterPill: {
     flexDirection: 'row',
@@ -379,71 +576,40 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: 6,
     marginHorizontal: spacing.md,
-    borderRadius: borderRadius.sm,
     marginBottom: spacing.xs,
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: colors.primary,
   },
   activeFilterText: {
-    color: colors.primaryDark,
-    fontSize: typography.sizes.xs,
+    fontSize: 12,
     fontWeight: typography.weights.bold,
+    color: colors.primaryDark,
   },
   activeFilterClose: {
-    color: colors.primaryDark,
     fontSize: 14,
-    fontWeight: typography.weights.bold,
-    paddingLeft: spacing.sm,
+    color: colors.primaryDark,
+    paddingHorizontal: 4,
   },
-  searchResultsContainer: {
+  horizontalProductsScroll: {
     paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
+    paddingBottom: spacing.sm,
   },
-  searchHeader: {
+  gridContainer: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.md,
-  },
-  searchCountText: {
-    fontSize: typography.sizes.sm,
-    fontWeight: typography.weights.semiBold,
-    color: colors.textPrimary,
-  },
-  clearSearchText: {
-    fontSize: typography.sizes.xs,
-    fontWeight: typography.weights.bold,
-    color: colors.primary,
-  },
-  emptySearch: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: spacing.xxl,
-    paddingHorizontal: spacing.lg,
-  },
-  emptyEmoji: {
-    fontSize: 54,
-    marginBottom: spacing.md,
-  },
-  emptyTitle: {
-    fontSize: typography.sizes.lg,
-    fontWeight: typography.weights.bold,
-    color: colors.textPrimary,
-    marginBottom: spacing.xs,
-  },
-  emptySubtitle: {
-    fontSize: typography.sizes.sm,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: 20,
+    paddingHorizontal: spacing.md,
+    marginTop: spacing.xs,
   },
   trustBanner: {
     flexDirection: 'row',
     backgroundColor: colors.surface,
-    borderRadius: borderRadius.md,
     marginHorizontal: spacing.md,
-    marginTop: spacing.md,
+    marginTop: spacing.lg,
     marginBottom: spacing.md,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.sm,
+    borderRadius: borderRadius.lg,
+    padding: spacing.md,
     borderWidth: 1,
     borderColor: colors.borderLight,
     elevation: 1,
@@ -455,6 +621,7 @@ const styles = StyleSheet.create({
   trustItem: {
     flex: 1,
     alignItems: 'center',
+    paddingHorizontal: 2,
   },
   trustIcon: {
     fontSize: 22,
@@ -468,15 +635,68 @@ const styles = StyleSheet.create({
   },
   trustSub: {
     fontSize: 9,
-    color: colors.textMuted,
+    color: colors.textSecondary,
     textAlign: 'center',
     marginTop: 2,
   },
   trustDivider: {
     width: 1,
+    height: '70%',
     backgroundColor: colors.borderLight,
-    height: '80%',
     alignSelf: 'center',
+  },
+  searchResultsContainer: {
+    paddingTop: spacing.xs,
+  },
+  searchHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  searchCountText: {
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.medium,
+    color: colors.textSecondary,
+  },
+  clearSearchText: {
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.bold,
+    color: colors.primary,
+  },
+  searchLoadingContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: spacing.xl,
+  },
+  searchLoadingText: {
+    fontSize: typography.sizes.sm,
+    color: colors.textSecondary,
+    marginLeft: spacing.sm,
+  },
+  emptySearch: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.xxl,
+    paddingHorizontal: spacing.xl,
+  },
+  emptyEmoji: {
+    fontSize: 56,
+    marginBottom: spacing.sm,
+  },
+  emptyTitle: {
+    fontSize: typography.sizes.lg,
+    fontWeight: typography.weights.bold,
+    color: colors.textPrimary,
+    marginBottom: spacing.xs,
+  },
+  emptySubtitle: {
+    fontSize: typography.sizes.sm,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 20,
   },
   floatingCartContainer: {
     position: 'absolute',

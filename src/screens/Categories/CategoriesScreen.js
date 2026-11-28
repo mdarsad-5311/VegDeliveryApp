@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,25 +6,28 @@ import {
   ScrollView,
   TouchableOpacity,
   StatusBar,
+  ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import colors from '../../constants/colors';
 import typography from '../../constants/typography';
 import { spacing, borderRadius } from '../../constants/theme';
 import useAppContext from '../../hooks/useAppContext';
-import {
-  SearchBar,
-  ProductCard,
-} from '../../components/home';
+import { SearchBar, ProductCard } from '../../components/home';
 import {
   CategoryCard,
   SortFilterBar,
   CategoryPills,
 } from '../../components/categories';
+import { VEG_CATEGORIES, ALL_PRODUCTS } from '../../constants/mockData';
 import {
-  VEG_CATEGORIES,
-  ALL_PRODUCTS,
-} from '../../constants/mockData';
+  categoryAPI,
+  productAPI,
+  normalizeCategory,
+  normalizeProduct,
+  formatApiError,
+} from '../../services';
 
 export const CategoriesScreen = ({ navigation, route }) => {
   const { cartCount, cartSubtotal, selectedAddress } = useAppContext();
@@ -35,6 +38,18 @@ export const CategoriesScreen = ({ navigation, route }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSort, setActiveSort] = useState('popularity');
 
+  // Backend Data State
+  const [categories, setCategories] = useState(VEG_CATEGORIES);
+  const [products, setProducts] = useState(ALL_PRODUCTS);
+  const [isLoading, setIsLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [apiError, setApiError] = useState(null);
+
+  // Search & Race Protection State
+  const [isSearching, setIsSearching] = useState(false);
+  const [backendSearchResults, setBackendSearchResults] = useState(null);
+  const searchReqIdRef = useRef(0);
+
   // Sync if route params change
   useEffect(() => {
     if (route?.params?.categoryId) {
@@ -42,48 +57,146 @@ export const CategoriesScreen = ({ navigation, route }) => {
     }
   }, [route?.params?.categoryId]);
 
+  // Fetch Categories from Backend
+  const fetchCategories = useCallback(async () => {
+    try {
+      const res = await categoryAPI.getAll();
+      const raw = Array.isArray(res.data) ? res.data : res.data.results || [];
+      if (raw.length > 0) {
+        setCategories(raw.map(normalizeCategory));
+      }
+    } catch (_) {
+      // Fallback kept
+    }
+  }, []);
+
+  // Fetch Products based on selected category, sort, and search
+  const fetchProducts = useCallback(
+    async (isPullRefresh = false) => {
+      if (isPullRefresh) {
+        setRefreshing(true);
+      } else {
+        setIsLoading(true);
+      }
+      setApiError(null);
+
+      try {
+        const params = { page_size: 50 };
+
+        if (selectedCategoryId !== 'all') {
+          params.category = selectedCategoryId;
+        }
+
+        if (activeSort === 'price_asc') {
+          params.ordering = 'price';
+        } else if (activeSort === 'price_desc') {
+          params.ordering = '-price';
+        } else if (activeSort === 'popularity') {
+          params.ordering = '-created_at';
+        }
+
+        const res = await productAPI.getAll(params);
+        const raw = Array.isArray(res.data) ? res.data : res.data.results || [];
+        if (raw.length > 0) {
+          setProducts(raw.map(normalizeProduct));
+        } else if (selectedCategoryId !== 'all') {
+          // If category has no items on backend, set empty array
+          setProducts([]);
+        }
+      } catch (err) {
+        setApiError(formatApiError(err));
+      } finally {
+        setIsLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [selectedCategoryId, activeSort],
+  );
+
+  useEffect(() => {
+    fetchCategories();
+  }, [fetchCategories]);
+
+  useEffect(() => {
+    fetchProducts();
+  }, [fetchProducts]);
+
   // Current category object
   const currentCategory = useMemo(() => {
     if (selectedCategoryId === 'all') return null;
-    return VEG_CATEGORIES.find(c => c.id === selectedCategoryId) || null;
-  }, [selectedCategoryId]);
-
-  // Filter products by selected category
-  const categoryProducts = useMemo(() => {
-    if (selectedCategoryId === 'all') {
-      return ALL_PRODUCTS;
-    }
-    return ALL_PRODUCTS.filter(p => p.categoryId === selectedCategoryId);
-  }, [selectedCategoryId]);
-
-  // Filter products by search query
-  const searchedProducts = useMemo(() => {
-    if (!searchQuery.trim()) return categoryProducts;
-    const q = searchQuery.toLowerCase().trim();
-    return categoryProducts.filter(
-      p =>
-        p.name.toLowerCase().includes(q) ||
-        p.category.toLowerCase().includes(q) ||
-        (p.tag && p.tag.toLowerCase().includes(q)) ||
-        (p.description && p.description.toLowerCase().includes(q)),
+    return (
+      categories.find(
+        c => c.id === selectedCategoryId || c.slug === selectedCategoryId,
+      ) || null
     );
-  }, [searchQuery, categoryProducts]);
+  }, [selectedCategoryId, categories]);
 
-  // Sort products
+  // Search handling with debounce and race-condition protection
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setBackendSearchResults(null);
+      setIsSearching(false);
+      return;
+    }
+
+    const currentReqId = ++searchReqIdRef.current;
+    setIsSearching(true);
+
+    const timer = setTimeout(async () => {
+      try {
+        const params = {};
+        if (selectedCategoryId !== 'all') {
+          params.category = selectedCategoryId;
+        }
+        const res = await productAPI.search(searchQuery.trim(), params);
+        if (currentReqId === searchReqIdRef.current) {
+          const raw = Array.isArray(res.data)
+            ? res.data
+            : res.data.results || [];
+          setBackendSearchResults(raw.map(normalizeProduct));
+          setIsSearching(false);
+        }
+      } catch (err) {
+        if (currentReqId === searchReqIdRef.current) {
+          // Fallback to local filter
+          const q = searchQuery.toLowerCase().trim();
+          const fallback = products.filter(
+            p =>
+              p.name.toLowerCase().includes(q) ||
+              (p.category && p.category.toLowerCase().includes(q)) ||
+              (p.tag && p.tag.toLowerCase().includes(q)) ||
+              (p.description && p.description.toLowerCase().includes(q)),
+          );
+          setBackendSearchResults(fallback);
+          setIsSearching(false);
+        }
+      }
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery, selectedCategoryId, products]);
+
+  // Combined product list (searched or active products)
+  const activeProducts = useMemo(() => {
+    if (backendSearchResults !== null) return backendSearchResults;
+    return products;
+  }, [backendSearchResults, products]);
+
+  // Sort products client-side for immediate responsive feedback
   const sortedProducts = useMemo(() => {
-    const list = [...searchedProducts];
+    const list = [...activeProducts];
     switch (activeSort) {
       case 'price_asc':
         return list.sort((a, b) => a.price - b.price);
       case 'price_desc':
         return list.sort((a, b) => b.price - a.price);
       case 'rating':
-        return list.sort((a, b) => b.rating - a.rating);
+        return list.sort((a, b) => (b.rating || 0) - (a.rating || 0));
       case 'popularity':
       default:
         return list.sort((a, b) => (b.reviews || 0) - (a.reviews || 0));
     }
-  }, [searchedProducts, activeSort]);
+  }, [activeProducts, activeSort]);
 
   // Handle select category
   const handleSelectCategory = catId => {
@@ -121,7 +234,8 @@ export const CategoriesScreen = ({ navigation, route }) => {
               <View style={styles.locationSnippetRow}>
                 <Text style={styles.locationIcon}>📍</Text>
                 <Text style={styles.locationText} numberOfLines={1}>
-                  Delivering to: {selectedAddress?.shortAddress || 'Your Address'}
+                  Delivering to:{' '}
+                  {selectedAddress?.shortAddress || 'Your Address'}
                 </Text>
               </View>
             </View>
@@ -140,8 +254,23 @@ export const CategoriesScreen = ({ navigation, route }) => {
           }
         />
 
+        {/* API Error Banner (if offline/unreachable) */}
+        {apiError ? (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorText}>
+              Unable to reach live catalog server. Showing offline items.
+            </Text>
+            <TouchableOpacity
+              style={styles.retryButton}
+              onPress={() => fetchProducts()}>
+              <Text style={styles.retryText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
         {/* 3. Category Switcher Pills */}
         <CategoryPills
+          categories={categories}
           selectedCategoryId={selectedCategoryId}
           onSelectCategory={handleSelectCategory}
         />
@@ -155,19 +284,29 @@ export const CategoriesScreen = ({ navigation, route }) => {
         {/* Main Content Area */}
         <ScrollView
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.scrollContent}>
+          contentContainerStyle={styles.scrollContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => fetchProducts(true)}
+              colors={[colors.primary]}
+              tintColor={colors.primary}
+            />
+          }>
           {/* VIEW A: All Categories Cards Overview (when 'all' is selected and no search) */}
           {selectedCategoryId === 'all' && !searchQuery.trim() && (
             <View style={styles.overviewSection}>
               <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Main Vegetable Categories</Text>
+                <Text style={styles.sectionTitle}>
+                  Main Vegetable Categories
+                </Text>
                 <Text style={styles.sectionSub}>
                   Select a category to view fresh items
                 </Text>
               </View>
 
-              {/* 4 Main Category Cards */}
-              {VEG_CATEGORIES.map(cat => (
+              {/* Category Cards */}
+              {categories.map(cat => (
                 <CategoryCard
                   key={cat.id}
                   category={cat}
@@ -177,7 +316,9 @@ export const CategoriesScreen = ({ navigation, route }) => {
 
               <View style={styles.allProductsHeader}>
                 <View style={styles.allProductsHeaderTitleCol}>
-                  <Text style={styles.sectionTitle}>All Fresh Farm Products</Text>
+                  <Text style={styles.sectionTitle}>
+                    All Fresh Farm Products
+                  </Text>
                   <Text style={styles.sectionCount}>
                     ({sortedProducts.length} items available)
                   </Text>
@@ -198,44 +339,52 @@ export const CategoriesScreen = ({ navigation, route }) => {
           )}
 
           {/* VIEW B: Category-wise Header when category is selected */}
-          {selectedCategoryId !== 'all' && !searchQuery.trim() && currentCategory && (
-            <View style={styles.categoryBanner}>
-              <View style={styles.categoryBannerLeft}>
-                <View
-                  style={[
-                    styles.bannerIconCircle,
-                    { backgroundColor: currentCategory.bgColor },
-                  ]}>
-                  <Text style={styles.bannerEmoji}>{currentCategory.icon}</Text>
+          {selectedCategoryId !== 'all' &&
+            !searchQuery.trim() &&
+            currentCategory && (
+              <View style={styles.categoryBanner}>
+                <View style={styles.categoryBannerLeft}>
+                  <View
+                    style={[
+                      styles.bannerIconCircle,
+                      { backgroundColor: currentCategory.bgColor },
+                    ]}>
+                    <Text style={styles.bannerEmoji}>
+                      {currentCategory.icon}
+                    </Text>
+                  </View>
+                  <View style={styles.bannerTexts}>
+                    <Text style={styles.bannerTitle}>
+                      {currentCategory.name}
+                    </Text>
+                    <Text style={styles.bannerSubtitle}>
+                      {currentCategory.description}
+                    </Text>
+                  </View>
                 </View>
-                <View style={styles.bannerTexts}>
-                  <Text style={styles.bannerTitle}>{currentCategory.name}</Text>
-                  <Text style={styles.bannerSubtitle}>
-                    {currentCategory.description}
+                <TouchableOpacity
+                  style={styles.bannerCountBadge}
+                  activeOpacity={0.8}
+                  onPress={() =>
+                    navigation.navigate('ProductListing', {
+                      categoryId: currentCategory.id,
+                      title: currentCategory.name,
+                    })
+                  }>
+                  <Text style={styles.bannerCountText}>
+                    {sortedProducts.length} items ⊞
                   </Text>
-                </View>
+                </TouchableOpacity>
               </View>
-              <TouchableOpacity
-                style={styles.bannerCountBadge}
-                activeOpacity={0.8}
-                onPress={() =>
-                  navigation.navigate('ProductListing', {
-                    categoryId: currentCategory.id,
-                    title: currentCategory.name,
-                  })
-                }>
-                <Text style={styles.bannerCountText}>
-                  {sortedProducts.length} items ⊞
-                </Text>
-              </TouchableOpacity>
-            </View>
-          )}
+            )}
 
           {/* Search Active Notification */}
           {searchQuery.trim().length > 0 && (
             <View style={styles.searchActiveBar}>
               <Text style={styles.searchActiveText}>
-                Showing results for "{searchQuery}" ({sortedProducts.length} found)
+                {isSearching
+                  ? `Searching for "${searchQuery}"...`
+                  : `Showing results for "${searchQuery}" (${sortedProducts.length} found)`}
               </Text>
               <TouchableOpacity onPress={() => setSearchQuery('')}>
                 <Text style={styles.searchActiveClear}>Clear</Text>
@@ -243,8 +392,13 @@ export const CategoriesScreen = ({ navigation, route }) => {
             </View>
           )}
 
-          {/* Product Grid or Empty State */}
-          {sortedProducts.length === 0 ? (
+          {/* Loading Indicator */}
+          {isLoading && !refreshing ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={colors.primary} />
+              <Text style={styles.loadingText}>Loading fresh produce...</Text>
+            </View>
+          ) : sortedProducts.length === 0 ? (
             <View style={styles.emptyState}>
               <Text style={styles.emptyIcon}>🔍🥦</Text>
               <Text style={styles.emptyTitle}>No Products Found</Text>
@@ -270,7 +424,10 @@ export const CategoriesScreen = ({ navigation, route }) => {
                   product={product}
                   variant="grid"
                   onPress={p =>
-                    navigation.navigate('ProductDetails', { product: p })
+                    navigation.navigate('ProductDetails', {
+                      product: p,
+                      productId: p.id,
+                    })
                   }
                 />
               ))}
@@ -345,9 +502,10 @@ const styles = StyleSheet.create({
     borderColor: colors.borderLight,
   },
   backArrow: {
-    fontSize: 18,
-    color: colors.primary,
+    fontSize: 20,
+    color: colors.primaryDark,
     fontWeight: typography.weights.bold,
+    marginTop: -2,
   },
   title: {
     fontSize: typography.sizes.lg,
@@ -360,20 +518,47 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   locationIcon: {
-    fontSize: 11,
-    marginRight: 3,
+    fontSize: 10,
+    marginRight: 4,
   },
   locationText: {
-    fontSize: typography.sizes.xs,
+    fontSize: 11,
     color: colors.textSecondary,
-    fontWeight: typography.weights.medium,
+    maxWidth: 220,
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFF3E0',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderBottomWidth: 1,
+    borderBottomColor: '#FFE0B2',
+  },
+  errorText: {
+    flex: 1,
+    fontSize: 11,
+    color: '#E65100',
+    marginRight: spacing.sm,
+  },
+  retryButton: {
+    backgroundColor: '#E65100',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: borderRadius.sm,
+  },
+  retryText: {
+    color: '#FFF',
+    fontSize: 10,
+    fontWeight: typography.weights.bold,
   },
   scrollContent: {
     paddingBottom: 90,
   },
   overviewSection: {
     paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
+    paddingTop: spacing.md,
   },
   sectionHeader: {
     marginBottom: spacing.sm,
@@ -390,43 +575,45 @@ const styles = StyleSheet.create({
   },
   allProductsHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: spacing.sm,
+    alignItems: 'center',
+    marginTop: spacing.md,
     marginBottom: spacing.xs,
   },
   allProductsHeaderTitleCol: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
+    flex: 1,
+  },
+  sectionCount: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 2,
   },
   fullGridBtn: {
     backgroundColor: colors.primaryLight,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderRadius: borderRadius.sm,
     borderWidth: 1,
     borderColor: colors.primary,
   },
   fullGridBtnText: {
-    fontSize: typography.sizes.xs,
-    fontWeight: typography.weights.bold,
     color: colors.primaryDark,
-  },
-  sectionCount: {
-    fontSize: typography.sizes.xs,
-    color: colors.textMuted,
-    marginLeft: 6,
+    fontSize: 11,
+    fontWeight: typography.weights.bold,
   },
   categoryBanner: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
+    alignItems: 'center',
     backgroundColor: colors.surface,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm,
+    marginHorizontal: spacing.md,
+    marginTop: spacing.sm,
     marginBottom: spacing.xs,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderLight,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
   },
   categoryBannerLeft: {
     flexDirection: 'row',
@@ -435,34 +622,32 @@ const styles = StyleSheet.create({
     marginRight: spacing.sm,
   },
   bannerIconCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: spacing.sm,
   },
   bannerEmoji: {
-    fontSize: 26,
+    fontSize: 20,
   },
   bannerTexts: {
     flex: 1,
   },
   bannerTitle: {
-    fontSize: typography.sizes.md,
+    fontSize: typography.sizes.sm,
     fontWeight: typography.weights.bold,
     color: colors.textPrimary,
   },
   bannerSubtitle: {
-    fontSize: typography.sizes.xs,
+    fontSize: 10,
     color: colors.textSecondary,
-    marginTop: 2,
-    lineHeight: 16,
   },
   bannerCountBadge: {
     backgroundColor: colors.primaryLight,
     paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingVertical: 4,
     borderRadius: borderRadius.sm,
   },
   bannerCountText: {
@@ -476,29 +661,37 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: colors.primaryLight,
     paddingHorizontal: spacing.md,
-    paddingVertical: 8,
+    paddingVertical: spacing.xs,
     marginHorizontal: spacing.md,
-    marginVertical: spacing.xs,
+    marginTop: spacing.xs,
     borderRadius: borderRadius.sm,
   },
   searchActiveText: {
-    fontSize: typography.sizes.xs,
+    fontSize: 12,
     color: colors.primaryDark,
-    fontWeight: typography.weights.semiBold,
-    flex: 1,
+    fontWeight: typography.weights.medium,
   },
   searchActiveClear: {
-    fontSize: typography.sizes.xs,
+    fontSize: 12,
     color: colors.primaryDark,
     fontWeight: typography.weights.bold,
-    marginLeft: spacing.sm,
+  },
+  loadingContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.xxl,
+  },
+  loadingText: {
+    marginTop: spacing.sm,
+    fontSize: typography.sizes.sm,
+    color: colors.textSecondary,
   },
   gridContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
     paddingHorizontal: spacing.md,
-    paddingTop: spacing.xs,
+    paddingTop: spacing.sm,
   },
   emptyState: {
     alignItems: 'center',
@@ -507,8 +700,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
   },
   emptyIcon: {
-    fontSize: 54,
-    marginBottom: spacing.md,
+    fontSize: 56,
+    marginBottom: spacing.sm,
   },
   emptyTitle: {
     fontSize: typography.sizes.lg,
@@ -521,7 +714,7 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     textAlign: 'center',
     lineHeight: 20,
-    marginBottom: spacing.lg,
+    marginBottom: spacing.md,
   },
   clearFilterButton: {
     backgroundColor: colors.primary,

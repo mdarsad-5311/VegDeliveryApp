@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import colors from '../../constants/colors';
@@ -20,7 +21,20 @@ export const AddressListScreen = ({ navigation, route }) => {
     selectedAddress,
     selectDeliveryAddress,
     deleteAddress,
+    setDefaultAddress,
+    fetchAddresses,
+    isAuthenticated,
   } = useAppContext();
+
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    if (isAuthenticated && typeof fetchAddresses === 'function') {
+      await fetchAddresses();
+    }
+    setRefreshing(false);
+  }, [isAuthenticated, fetchAddresses]);
 
   const isSelectMode = !!route.params?.selectMode;
 
@@ -28,6 +42,12 @@ export const AddressListScreen = ({ navigation, route }) => {
     await selectDeliveryAddress(addr.id);
     if (isSelectMode) {
       navigation.goBack();
+    }
+  };
+
+  const handleSetDefaultAddress = async addr => {
+    if (typeof setDefaultAddress === 'function') {
+      await setDefaultAddress(addr.id);
     }
   };
 
@@ -110,7 +130,15 @@ export const AddressListScreen = ({ navigation, route }) => {
           <View style={styles.listWrapper}>
             <ScrollView
               contentContainerStyle={styles.scrollContent}
-              showsVerticalScrollIndicator={false}>
+              showsVerticalScrollIndicator={false}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={handleRefresh}
+                  colors={[colors.primary]}
+                  tintColor={colors.primary}
+                />
+              }>
               <Text style={styles.sectionNotice}>
                 {isSelectMode
                   ? 'Tap an address to select it for this order'
@@ -127,6 +155,7 @@ export const AddressListScreen = ({ navigation, route }) => {
                     onSelect={handleSelectAddress}
                     onEdit={handleEditAddress}
                     onDelete={handleDeleteAddress}
+                    onSetDefault={handleSetDefaultAddress}
                   />
                 );
               })}
