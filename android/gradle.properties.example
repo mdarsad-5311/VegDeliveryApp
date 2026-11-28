@@ -1,0 +1,29 @@
+# ==============================================================================
+# FreshVeg Android Release Signing Configuration Template
+# ==============================================================================
+# DO NOT commit real keystore passwords or private signing keys to Git.
+#
+# Option A: Local Developer Machine (Recommended for local builds)
+# ------------------------------------------------------------------------------
+# Add the following properties to your user-level Gradle configuration at:
+#   ~/.gradle/gradle.properties
+#
+#   MYAPP_UPLOAD_STORE_FILE=freshveg-release-key.keystore
+#   MYAPP_UPLOAD_KEY_ALIAS=freshveg-key-alias
+#   MYAPP_UPLOAD_STORE_PASSWORD=your_keystore_password_here
+#   MYAPP_UPLOAD_KEY_PASSWORD=your_key_password_here
+#
+# Option B: CI/CD Environment Variables (Recommended for automated pipelines)
+# ------------------------------------------------------------------------------
+# Set the following environment variables in your CI/CD secrets manager:
+#   ORG_GRADLE_PROJECT_MYAPP_UPLOAD_STORE_FILE=freshveg-release-key.keystore
+#   ORG_GRADLE_PROJECT_MYAPP_UPLOAD_KEY_ALIAS=freshveg-key-alias
+#   ORG_GRADLE_PROJECT_MYAPP_UPLOAD_STORE_PASSWORD=your_keystore_password_here
+#   ORG_GRADLE_PROJECT_MYAPP_UPLOAD_KEY_PASSWORD=your_key_password_here
+#
+# Note: For relative keystore paths, Gradle resolves from the android/app directory.
+# ==============================================================================
+MYAPP_UPLOAD_STORE_FILE=freshveg-release-key.keystore
+MYAPP_UPLOAD_KEY_ALIAS=freshveg-key-alias
+MYAPP_UPLOAD_STORE_PASSWORD=your_keystore_password_here
+MYAPP_UPLOAD_KEY_PASSWORD=your_key_password_here
