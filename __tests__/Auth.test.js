@@ -246,4 +246,237 @@ describe('Phase 1 Authentication & Session Unit Tests', () => {
     expect(contextRef.isAuthenticated).toBe(false);
     expect(contextRef.authToken).toBeNull();
   });
+
+  // 11. Authenticated profile update calls authAPI.updateProfile with correctly mapped payload
+  test('11. Authenticated updateUserProfile calls authAPI.updateProfile with mapped fields', async () => {
+    await ReactTestRenderer.act(async () => {
+      await contextRef.loginUser(
+        {
+          id: 42,
+          username: 'rohit_kumar',
+          full_name: 'Rohit Kumar',
+          email: 'rohit@freshveg.in',
+          phone_number: '9876500001',
+          role: 'customer',
+        },
+        'token_user_42',
+      );
+    });
+
+    const updateSpy = jest.spyOn(authAPI, 'updateProfile').mockResolvedValueOnce({
+      status: 200,
+      data: {
+        message: 'Profile updated successfully.',
+        profile: {
+          id: 42,
+          username: 'rohit_kumar',
+          full_name: 'Rohit K. Sharma',
+          email: 'rohit.sharma@freshveg.in',
+          phone_number: '9876599999',
+          role: 'customer',
+          is_verified: true,
+          created_at: '2026-02-10T00:00:00Z',
+        },
+      },
+    });
+
+    let res;
+    await ReactTestRenderer.act(async () => {
+      res = await contextRef.updateUserProfile({
+        name: '  Rohit K. Sharma  ',
+        email: '  Rohit.Sharma@FreshVeg.in  ',
+        phone: '(987) 659-9999',
+        avatar: '🥕',
+        bio: 'Carrot lover',
+      });
+    });
+
+    // 1. Verify API was called
+    expect(updateSpy).toHaveBeenCalledTimes(1);
+
+    // 2. Verify payload correctly maps name -> full_name, email -> email, phone -> phone_number
+    // and that avatar & bio are NOT sent to Django
+    expect(updateSpy).toHaveBeenCalledWith({
+      full_name: 'Rohit K. Sharma',
+      email: 'rohit.sharma@freshveg.in',
+      phone_number: '9876599999',
+    });
+
+    // 3. Successful server response updates context state and AsyncStorage
+    expect(res.success).toBe(true);
+    expect(contextRef.user.name).toBe('Rohit K. Sharma');
+    expect(contextRef.user.email).toBe('rohit.sharma@freshveg.in');
+    expect(contextRef.user.phone).toBe('9876599999');
+
+    // 4. Avatar and bio are preserved in context and storage
+    expect(contextRef.user.avatar).toBe('🥕');
+    expect(contextRef.user.bio).toBe('Carrot lover');
+
+    const storedProfile = JSON.parse(
+      await AsyncStorage.getItem(STORAGE_KEY_USER_PROFILE),
+    );
+    expect(storedProfile.name).toBe('Rohit K. Sharma');
+    expect(storedProfile.email).toBe('rohit.sharma@freshveg.in');
+    expect(storedProfile.phone).toBe('9876599999');
+    expect(storedProfile.avatar).toBe('🥕');
+    expect(storedProfile.bio).toBe('Carrot lover');
+  });
+
+  // 12. Duplicate email error returns failure and preserves old profile
+  test('12. Duplicate email API error returns failure and preserves previous profile', async () => {
+    await ReactTestRenderer.act(async () => {
+      await contextRef.loginUser(
+        {
+          id: 42,
+          username: 'rohit_kumar',
+          full_name: 'Rohit Kumar',
+          email: 'rohit@freshveg.in',
+          phone_number: '9876500001',
+          role: 'customer',
+        },
+        'token_user_42',
+      );
+    });
+
+    const previousUser = { ...contextRef.user };
+
+    jest.spyOn(authAPI, 'updateProfile').mockRejectedValueOnce({
+      response: {
+        status: 400,
+        data: {
+          email: ['An account with this email address already exists.'],
+        },
+      },
+    });
+
+    let res;
+    await ReactTestRenderer.act(async () => {
+      res = await contextRef.updateUserProfile({
+        name: 'Rohit New',
+        email: 'taken@freshveg.in',
+        phone: '9876500001',
+      });
+    });
+
+    expect(res.success).toBe(false);
+    expect(res.message).toBe('An account with this email address already exists.');
+    expect(contextRef.user.name).toBe(previousUser.name);
+    expect(contextRef.user.email).toBe(previousUser.email);
+
+    const storedProfile = JSON.parse(
+      await AsyncStorage.getItem(STORAGE_KEY_USER_PROFILE),
+    );
+    expect(storedProfile.email).toBe(previousUser.email);
+  });
+
+  // 13. Duplicate phone API error returns failure and preserves old profile
+  test('13. Duplicate phone API error returns failure and preserves previous profile', async () => {
+    await ReactTestRenderer.act(async () => {
+      await contextRef.loginUser(
+        {
+          id: 42,
+          username: 'rohit_kumar',
+          full_name: 'Rohit Kumar',
+          email: 'rohit@freshveg.in',
+          phone_number: '9876500001',
+          role: 'customer',
+        },
+        'token_user_42',
+      );
+    });
+
+    const previousUser = { ...contextRef.user };
+
+    jest.spyOn(authAPI, 'updateProfile').mockRejectedValueOnce({
+      response: {
+        status: 400,
+        data: {
+          phone_number: ['An account with this phone number already exists.'],
+        },
+      },
+    });
+
+    let res;
+    await ReactTestRenderer.act(async () => {
+      res = await contextRef.updateUserProfile({
+        name: 'Rohit New',
+        email: 'rohit@freshveg.in',
+        phone: '9800000000',
+      });
+    });
+
+    expect(res.success).toBe(false);
+    expect(res.message).toBe('An account with this phone number already exists.');
+    expect(contextRef.user.phone).toBe(previousUser.phone);
+  });
+
+  // 14. Network failure does not produce false success
+  test('14. Network failure returns failure and does not produce false local success', async () => {
+    await ReactTestRenderer.act(async () => {
+      await contextRef.loginUser(
+        {
+          id: 42,
+          username: 'rohit_kumar',
+          full_name: 'Rohit Kumar',
+          email: 'rohit@freshveg.in',
+          phone_number: '9876500001',
+          role: 'customer',
+        },
+        'token_user_42',
+      );
+    });
+
+    const previousUser = { ...contextRef.user };
+
+    jest.spyOn(authAPI, 'updateProfile').mockRejectedValueOnce({
+      code: 'ECONNABORTED',
+      message: 'timeout of 10000ms exceeded',
+    });
+
+    let res;
+    await ReactTestRenderer.act(async () => {
+      res = await contextRef.updateUserProfile({
+        name: 'Rohit Disconnected',
+        email: 'rohit.offline@freshveg.in',
+        phone: '9876500001',
+      });
+    });
+
+    expect(res.success).toBe(false);
+    expect(res.message).toContain('timed out');
+    expect(contextRef.user.name).toBe(previousUser.name);
+    expect(contextRef.user.email).toBe(previousUser.email);
+  });
+
+  // 15. Guest profile update retains existing local-only behavior
+  test('15. Guest profile update retains existing local-only behavior', async () => {
+    await AsyncStorage.removeItem(STORAGE_KEY_AUTH_TOKEN);
+    await ReactTestRenderer.act(async () => {
+      await contextRef.logoutUser();
+    });
+
+    const updateSpy = jest.spyOn(authAPI, 'updateProfile');
+
+    let res;
+    await ReactTestRenderer.act(async () => {
+      res = await contextRef.updateUserProfile({
+        name: 'Guest Shopper',
+        email: 'guest@local.device',
+        phone: '9123456789',
+        avatar: '🍅',
+        bio: 'Just browsing local vegetables',
+      });
+    });
+
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(res.success).toBe(true);
+    expect(contextRef.user.name).toBe('Guest Shopper');
+    expect(contextRef.user.email).toBe('guest@local.device');
+    expect(contextRef.user.avatar).toBe('🍅');
+
+    const storedProfile = JSON.parse(
+      await AsyncStorage.getItem(STORAGE_KEY_USER_PROFILE),
+    );
+    expect(storedProfile.name).toBe('Guest Shopper');
+  });
 });

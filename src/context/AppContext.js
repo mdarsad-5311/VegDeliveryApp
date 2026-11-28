@@ -1803,27 +1803,98 @@ export const AppProvider = ({ children }) => {
   );
 
   // Update user profile
-  const updateUserProfile = useCallback(async updatedData => {
-    let nextUser = null;
-    setUser(prev => {
-      nextUser = {
-        ...prev,
+  const updateUserProfile = useCallback(
+    async updatedData => {
+      if (!updatedData) {
+        return { success: false, message: 'No profile data provided.' };
+      }
+
+      if (isAuthenticated) {
+        try {
+          const patchPayload = {};
+          if (
+            updatedData.name !== undefined ||
+            updatedData.full_name !== undefined
+          ) {
+            const rawName =
+              updatedData.name !== undefined
+                ? updatedData.name
+                : updatedData.full_name;
+            patchPayload.full_name = (rawName || '').trim();
+          }
+          if (updatedData.email !== undefined) {
+            patchPayload.email = (updatedData.email || '').trim().toLowerCase();
+          }
+          if (
+            updatedData.phone !== undefined ||
+            updatedData.phone_number !== undefined
+          ) {
+            const rawPhone =
+              updatedData.phone !== undefined
+                ? updatedData.phone
+                : updatedData.phone_number;
+            patchPayload.phone_number = String(rawPhone || '').replace(/\D/g, '');
+          }
+
+          const res = await authAPI.updateProfile(patchPayload);
+          const backendProfile = res?.data?.profile || res?.data;
+
+          if (backendProfile) {
+            const formatted = formatUserProfile(backendProfile);
+            // Preserve frontend-only properties (avatar, bio) from existing user or updatedData
+            const nextUser = {
+              ...formatted,
+              avatar:
+                updatedData.avatar !== undefined
+                  ? updatedData.avatar
+                  : user?.avatar || formatted.avatar || '🥦',
+              bio:
+                updatedData.bio !== undefined
+                  ? updatedData.bio
+                  : user?.bio ||
+                    formatted.bio ||
+                    'Farm fresh vegetable enthusiast',
+            };
+
+            setUser(nextUser);
+            await AsyncStorage.setItem(
+              STORAGE_KEY_USER_PROFILE,
+              JSON.stringify(nextUser),
+            );
+
+            return { success: true, user: nextUser };
+          }
+        } catch (err) {
+          console.warn('Backend updateProfile error:', err);
+          const errMsg = formatApiError(err);
+          const errorMsgStr =
+            typeof errMsg === 'string'
+              ? errMsg
+              : 'Failed to update profile. Please try again.';
+          return { success: false, message: errorMsgStr };
+        }
+      }
+
+      // Guest / unauthenticated fallback: local-only update
+      const nextUser = {
+        ...(user || DEFAULT_USER_PROFILE),
         ...updatedData,
       };
-      return nextUser;
-    });
+      setUser(nextUser);
 
-    try {
-      await AsyncStorage.setItem(
-        STORAGE_KEY_USER_PROFILE,
-        JSON.stringify(nextUser),
-      );
-    } catch (err) {
-      console.warn('Failed to save user profile to AsyncStorage:', err);
-    }
+      try {
+        await AsyncStorage.setItem(
+          STORAGE_KEY_USER_PROFILE,
+          JSON.stringify(nextUser),
+        );
+      } catch (err) {
+        console.warn('Failed to save user profile to AsyncStorage:', err);
+      }
 
-    return { success: true, user: nextUser };
-  }, []);
+      return { success: true, user: nextUser };
+    },
+    [isAuthenticated, user],
+  );
 
   // Session verification against backend
   const verifySession = useCallback(async () => {

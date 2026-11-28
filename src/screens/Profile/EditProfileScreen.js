@@ -78,7 +78,7 @@ export const EditProfileScreen = ({ navigation }) => {
     const res = await updateUserProfile(updated);
     setIsSubmitting(false);
 
-    if (res.success) {
+    if (res && res.success) {
       Alert.alert(
         'Profile Updated',
         'Your profile details have been successfully saved.',
@@ -90,7 +90,10 @@ export const EditProfileScreen = ({ navigation }) => {
         ],
       );
     } else {
-      Alert.alert('Error', 'Failed to update profile. Please try again.');
+      Alert.alert(
+        'Update Failed',
+        res?.message || 'Failed to update profile. Please try again.',
+      );
     }
   };
 
